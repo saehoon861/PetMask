@@ -1,0 +1,7 @@
+#가상환경
+.venv
+
+#Model weights
+weights/
+*.pth
+*.pt
