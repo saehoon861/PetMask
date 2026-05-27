@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.136.3",
+    "matplotlib>=3.10.9",
     "numpy>=2.4.6",
+    "torchmetrics>=1.9.0",
     "torchvision>=0.27.0",
     "wandb>=0.27.0",
 ]

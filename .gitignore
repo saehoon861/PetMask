@@ -5,3 +5,6 @@
 weights/
 *.pth
 *.pt
+
+#dataset
+OxfordPets/
