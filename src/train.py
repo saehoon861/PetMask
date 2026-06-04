@@ -5,7 +5,7 @@ from losses.loss import multiclass_dice_loss
 from dataset.dataset_load import OxfordIIITPetsAugmented
 from dataset.dataset_load import tensor_trimap
 from dataset.dataset_load import args_to_dict
-from model import ResNetUNet
+from models.model import ResNetUNet
 import time
 import torchvision
 import os
@@ -13,7 +13,7 @@ import torchvision.transforms as T
 import wandb
 import torch.optim as optim
 from torch.optim import lr_scheduler
-
+from torch.utils.data import TensorDataset, DataLoader
 
 checkpoint_path = "checkpoint.pth"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -107,24 +107,50 @@ pets_test_loader = torch.utils.data.DataLoader(
     shuffle=True,
 )
 
-dataloaders = {
-    "train": pets_train_loader,
-    "val": pets_test_loader
-}
+#묵업데이터: 실제 학습할 때는 False로 바꿔야 함. VS Code에서 빠르게 테스트하기 위해 True로 설정한 것.
+
+USE_MOCK = True  # VS Code 테스트용. Colab 실제 학습할 때는 False
+
+if USE_MOCK:
+    num_class = 3
+    mock_n = 8
+    mock_h = 128
+    mock_w = 128
+
+    mock_inputs = torch.randn(mock_n, 3, mock_h, mock_w)
+    mock_targets = torch.randint(
+        low=0,
+        high=num_class,
+        size=(mock_n, 1, mock_h, mock_w)
+    )
+
+    mock_dataset = TensorDataset(mock_inputs, mock_targets)
+
+    dataloaders = {
+        "train": DataLoader(mock_dataset, batch_size=2, shuffle=True),
+        "val": DataLoader(mock_dataset, batch_size=2, shuffle=False),
+    }
+
+else:
+    dataloaders = {
+        "train": pets_train_loader,
+        "val": pets_test_loader
+    }
 
 
 def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
     # wandb initialization
-    wandb.init(
-        project="PetMask",
-        config={
-            "learning_rate": optimizer.param_groups[0]['lr'],
-            "epochs": num_epochs,
-            "batch_size": dataloaders['train'].batch_size,
-            "patience": patience,
-            "model": "ResNet18UNet"
-        }
-    )
+    if not USE_MOCK:
+        wandb.init(
+            project="PetMask",
+            config={
+                "learning_rate": optimizer.param_groups[0]['lr'],
+                "epochs": num_epochs,
+                "batch_size": dataloaders['train'].batch_size,
+                "patience": patience,
+                "model": "ResNet18UNet"
+            }
+        )
 
     best_loss = 1e10
     stop_count = 0
@@ -201,7 +227,9 @@ def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
         if stop_count >= patience:
             print("Early stopping triggered. Training halted.")
             break
-    wandb.finish()
+        
+    if not USE_MOCK:
+        wandb.finish()
 
     print('Best val loss: {:4f}'.format(best_loss))
 
@@ -224,4 +252,7 @@ optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
 
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=8, gamma=0.1)
 
-model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=100, patience=5)
+if USE_MOCK:
+    model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=1, patience=1)
+else:
+    model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=100, patience=5)
