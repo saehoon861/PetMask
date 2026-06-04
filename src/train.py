@@ -1,7 +1,7 @@
 from collections import defaultdict
 import torch
 import torch.nn.functional as F
-from losses.loss import dice_loss
+from losses.loss import multiclass_dice_loss
 from dataset.dataset_load import OxfordIIITPetsAugmented
 from dataset.dataset_load import tensor_trimap
 from dataset.dataset_load import args_to_dict
@@ -36,25 +36,17 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 #BCE: 한 픽셀이 잘 맞췄는가
 #dice loss: 예측 마스크 전체와 정답 마스크 전체가 얼마나 겹치는가?
-def calc_loss(pred, target, metrics, bce_weight=0.5):
-    bce = F.binary_cross_entropy_with_logits(pred, target) # sigmoid + BCE를 한번에 진행
-    pred = torch.sigmoid(pred)
-    dice = dice_loss(pred, target)
+def calc_loss(pred, target, metrics, ce_weight=0.5):
+    target = target.squeeze(1).long()
 
-    loss = bce * bce_weight + dice * (1 - bce_weight)
+    ce = F.cross_entropy(pred, target)
+    dice = multiclass_dice_loss(pred, target)
 
-#target.size(0)은 현재 배치 안에 들어있는 이미지 개수, 즉 batch size
-#배치마다 크기가 다를 수 있기 때문에, 각 배치의 평균 로스에 배치의 크기(target.size(0))를 곱해
-#그 배치 안에서 발생한 진짜 손실의 총합'**으로 되돌려 놓는 것
+    loss = ce * ce_weight + dice * (1 - ce_weight)
 
-# loss는 계산 그래프에 연결된 PyTorch Tensor이다.
-# .data는 loss에서 값만 꺼내 계산 그래프와 분리된 Tensor처럼 사용하기 위한 속성이다.
-# .cpu()는 GPU에 있는 Tensor를 NumPy로 변환하기 위해 CPU 메모리로 옮기는 과정이다.
-# .numpy()는 PyTorch Tensor를 NumPy 값으로 변환하여 metrics에 누적하기 위한 과정이다.
-# 단, .data는 예전 방식이므로 요즘은 loss.detach().cpu().item()을 더 권장한다.
-    metrics['bce'] += bce.data.cpu().numpy() * target.size(0)
-    metrics['dice'] += dice.data.cpu().numpy() * target.size(0)
-    metrics['loss'] += loss.data.cpu().numpy() * target.size(0)
+    metrics["ce"] += ce.detach().cpu().item() * target.size(0)
+    metrics["dice"] += dice.detach().cpu().item() * target.size(0)
+    metrics["loss"] += loss.detach().cpu().item() * target.size(0)
 
     return loss
 
