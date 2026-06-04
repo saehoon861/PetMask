@@ -112,9 +112,10 @@ dataloaders = {
 }
 
 
-def train_model(model, optimizer, scheduler, num_epochs=25):
+def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
     best_loss = 1e10
-    
+    stop_count = 0
+
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
@@ -170,14 +171,23 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
               for param_group in optimizer.param_groups:
                   print("LR", param_group['lr'])
 
-            # save the model weights
-            if phase == 'val' and epoch_loss < best_loss:
-                print(f"saving best model to {checkpoint_path}")
-                best_loss = epoch_loss
-                torch.save(model.state_dict(), checkpoint_path)
+            if phase == 'val':
+                # save the model weights if validation loss improved
+                if epoch_loss < best_loss:
+                    print(f"saving best model to {checkpoint_path}")
+                    best_loss = epoch_loss
+                    torch.save(model.state_dict(), checkpoint_path)
+                    stop_count = 0  # reset early stopping counter
+                else:
+                    stop_count += 1
+                    print(f"EarlyStopping counter: {stop_count} out of {patience}")
 
         time_elapsed = time.time() - since
         print('{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+        
+        if stop_count >= patience:
+            print("Early stopping triggered. Training halted.")
+            break
 
     print('Best val loss: {:4f}'.format(best_loss))
 
@@ -200,4 +210,4 @@ optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
 
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=8, gamma=0.1)
 
-model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=10)
+model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=100, patience=5)
