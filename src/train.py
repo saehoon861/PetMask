@@ -1,0 +1,211 @@
+from collections import defaultdict
+import torch
+import torch.nn.functional as F
+from losses.loss import dice_loss
+from dataset.dataset_load import OxfordIIITPetsAugmented
+from dataset.dataset_load import tensor_trimap
+from dataset.dataset_load import args_to_dict
+from model import ResNetUNet
+import time
+import torchvision
+import os
+import torchvision.transforms as T
+import torch.optim as optim
+from torch.optim import lr_scheduler
+
+
+checkpoint_path = "checkpoint.pth"
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Sigmoid + BCEWithLogits
+# - 출력: [N, 6, H, W]
+# - 6개의 마스크 채널을 각각 독립적인 binary 문제로 봄
+# - 각 채널마다 "이 픽셀이 해당 클래스인가? yes/no"를 판단
+# - 한 픽셀이 여러 클래스에 동시에 속할 수 있는 multi-label 방식
+# - loss: F.binary_cross_entropy_with_logits(pred, target)
+# - target shape: [N, 6, H, W], 값은 0 또는 1
+
+
+# Softmax + CrossEntropy
+# - 출력: [N, 6, H, W]
+# - 한 픽셀이 6개 클래스 중 딱 하나에만 속한다고 봄
+# - 채널 방향으로 softmax를 적용해 클래스끼리 경쟁시킴
+# - 최종 예측은 보통 torch.argmax(pred, dim=1)
+# - 한 픽셀당 하나의 클래스만 선택하는 multi-class 방식
+# - loss: F.cross_entropy(pred, target)
+# - target shape: [N, H, W], 값은 0~5 클래스 인덱스
+
+#BCE: 한 픽셀이 잘 맞췄는가
+#dice loss: 예측 마스크 전체와 정답 마스크 전체가 얼마나 겹치는가?
+def calc_loss(pred, target, metrics, bce_weight=0.5):
+    bce = F.binary_cross_entropy_with_logits(pred, target) # sigmoid + BCE를 한번에 진행
+    pred = torch.sigmoid(pred)
+    dice = dice_loss(pred, target)
+
+    loss = bce * bce_weight + dice * (1 - bce_weight)
+
+#target.size(0)은 현재 배치 안에 들어있는 이미지 개수, 즉 batch size
+#배치마다 크기가 다를 수 있기 때문에, 각 배치의 평균 로스에 배치의 크기(target.size(0))를 곱해
+#그 배치 안에서 발생한 진짜 손실의 총합'**으로 되돌려 놓는 것
+
+# loss는 계산 그래프에 연결된 PyTorch Tensor이다.
+# .data는 loss에서 값만 꺼내 계산 그래프와 분리된 Tensor처럼 사용하기 위한 속성이다.
+# .cpu()는 GPU에 있는 Tensor를 NumPy로 변환하기 위해 CPU 메모리로 옮기는 과정이다.
+# .numpy()는 PyTorch Tensor를 NumPy 값으로 변환하여 metrics에 누적하기 위한 과정이다.
+# 단, .data는 예전 방식이므로 요즘은 loss.detach().cpu().item()을 더 권장한다.
+    metrics['bce'] += bce.data.cpu().numpy() * target.size(0)
+    metrics['dice'] += dice.data.cpu().numpy() * target.size(0)
+    metrics['loss'] += loss.data.cpu().numpy() * target.size(0)
+
+    return loss
+
+def print_metrics(metrics, epoch_samples, phase):
+    outputs = []
+    for k in metrics.keys():
+        outputs.append("{}: {:4f}".format(k, metrics[k] / epoch_samples))
+
+    print("{}: {}".format(phase, ", ".join(outputs)))
+    
+working_dir = "/home/sehoon/workspace/PetMask/src/dataset"
+pets_path_train = os.path.join(working_dir, 'OxfordPets', 'train')
+pets_path_test = os.path.join(working_dir, 'OxfordPets', 'test')
+pets_train_orig = torchvision.datasets.OxfordIIITPet(root=pets_path_train, split="trainval", target_types="segmentation", download=True)
+pets_test_orig = torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
+
+transform_dict = args_to_dict(
+    pre_transform=T.ToTensor(),
+    pre_target_transform=T.ToTensor(),
+    common_transform=T.Compose([
+        # Random Horizontal Flip as data augmentation.
+        T.RandomHorizontalFlip(p=0.5)
+    ]),
+    post_transform=T.Compose([
+        T.Resize((128, 128), interpolation=T.InterpolationMode.BILINEAR),
+        # Color Jitter as data augmentation.
+        T.ColorJitter(contrast=0.3),
+    ]),
+    post_target_transform=T.Compose([
+        T.Resize((128, 128), interpolation=T.InterpolationMode.NEAREST),
+        T.Lambda(tensor_trimap),
+    ]))
+
+pets_train = OxfordIIITPetsAugmented(
+    root=pets_path_train,
+    split="trainval",
+    target_types="segmentation",
+    download=False,
+    **transform_dict,
+)
+pets_test = OxfordIIITPetsAugmented(
+    root=pets_path_test,
+    split="test",
+    target_types="segmentation",
+    download=False,
+    **transform_dict,
+)
+
+pets_train_loader = torch.utils.data.DataLoader(
+    pets_train,
+    batch_size=64,
+    shuffle=True,
+)
+pets_test_loader = torch.utils.data.DataLoader(
+    pets_test,
+    batch_size=21,
+    shuffle=True,
+)
+
+dataloaders = {
+    "train": pets_train_loader,
+    "val": pets_test_loader
+}
+
+
+def train_model(model, optimizer, scheduler, num_epochs=25):
+    best_loss = 1e10
+    
+    for epoch in range(num_epochs):
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        since = time.time()
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()  # Set model to training mode
+            else:
+                model.eval()   # Set model to evaluate mode
+
+            metrics = defaultdict(float)
+            epoch_samples = 0
+
+            for inputs, labels in dataloaders[phase]:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                # zero the parameter gradients
+                optimizer.zero_grad()
+
+                # forward
+                # track history if only in train
+
+                #torch.set_grad_enabled(조건)은 조건에 따라 PyTorch가
+                #gradient 계산 기록을 할지 말지 정하는 기능
+
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    loss = calc_loss(outputs, labels, metrics)
+
+                    # backward + optimize only if in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                # statistics
+                epoch_samples += inputs.size(0)
+
+            print_metrics(metrics, epoch_samples, phase)
+            epoch_loss = metrics['loss'] / epoch_samples
+
+            if phase == 'train':
+              scheduler.step()
+
+              # model.parameters()는 모델의 학습 가능한 파라미터(weight, bias 등)를 optimizer에 전달한다.
+              # optimizer는 전달받은 파라미터만 loss.backward()로 계산된 gradient를 이용해 업데이트한다.
+              # lr=1e-5는 초기 learning rate를 0.00001로 설정한다는 의미이다.
+              # scheduler가 없으면 이 값이 유지되고, scheduler가 있으면 학습 중 변경될 수 있다.
+            
+
+              for param_group in optimizer.param_groups:
+                  print("LR", param_group['lr'])
+
+            # save the model weights
+            if phase == 'val' and epoch_loss < best_loss:
+                print(f"saving best model to {checkpoint_path}")
+                best_loss = epoch_loss
+                torch.save(model.state_dict(), checkpoint_path)
+
+        time_elapsed = time.time() - since
+        print('{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+
+    print('Best val loss: {:4f}'.format(best_loss))
+
+    # load best model weights
+    model.load_state_dict(torch.load(checkpoint_path))
+    return model
+
+
+num_class = 3
+model = ResNetUNet(num_class).to(device)
+
+# freeze backbone layers
+for l in model.base_layers:
+  for param in l.parameters():
+    param.requires_grad = False
+
+#filter(조건함수, 데이터)
+# ex) filter(lambda x: x>10, numbers) numbers=[1,10, 20, 30, 40]
+optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=8, gamma=0.1)
+
+model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=10)

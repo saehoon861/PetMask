@@ -172,14 +172,13 @@ print(f"Batch of training inputs shape: {train_pets_inputs.shape}")
 print(f"Batch of training targets shape: {train_pets_targets.shape}")
 
 
-# pets_input_grid = torchvision.utils.make_grid(train_pets_inputs, nrow=8)
-# plt.imshow(t2img(pets_input_grid))
-# plt.axis("off")
-# plt.show()
+pets_input_grid = torchvision.utils.make_grid(train_pets_inputs, nrow=8)
+plt.imshow(t2img(pets_input_grid))
+plt.axis("off")
+plt.show()
 
-# pets_targets_grid = torchvision.utils.make_grid(train_pets_targets / 2.0, nrow=8)
-# plt.imshow(t2img(pets_targets_grid))
-# plt.axis("off")
-# plt.show()
+pets_targets_grid = torchvision.utils.make_grid(train_pets_targets / 2.0, nrow=8)
+plt.imshow(t2img(pets_targets_grid))
+plt.axis("off")
+plt.show()
 
-print(train_pets_targets[3][0][100])
