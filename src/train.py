@@ -10,6 +10,7 @@ import time
 import torchvision
 import os
 import torchvision.transforms as T
+import wandb
 import torch.optim as optim
 from torch.optim import lr_scheduler
 
@@ -113,6 +114,18 @@ dataloaders = {
 
 
 def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
+    # wandb initialization
+    wandb.init(
+        project="PetMask",
+        config={
+            "learning_rate": optimizer.param_groups[0]['lr'],
+            "epochs": num_epochs,
+            "batch_size": dataloaders['train'].batch_size,
+            "patience": patience,
+            "model": "ResNet18UNet"
+        }
+    )
+
     best_loss = 1e10
     stop_count = 0
 
@@ -188,6 +201,7 @@ def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
         if stop_count >= patience:
             print("Early stopping triggered. Training halted.")
             break
+    wandb.finish()
 
     print('Best val loss: {:4f}'.format(best_loss))
 
