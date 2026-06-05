@@ -1,4 +1,5 @@
 from collections import defaultdict
+import argparse
 import torch
 import torch.nn.functional as F
 from losses.loss import multiclass_dice_loss
@@ -15,7 +16,6 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import TensorDataset, DataLoader
 
-checkpoint_path = "checkpoint.pth"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Sigmoid + BCEWithLogits
 # - 출력: [N, 6, H, W]
@@ -58,89 +58,10 @@ def print_metrics(metrics, epoch_samples, phase):
 
     print("{}: {}".format(phase, ", ".join(outputs)))
     
-working_dir = "/home/sehoon/workspace/PetMask/src/dataset"
-pets_path_train = os.path.join(working_dir, 'OxfordPets', 'train')
-pets_path_test = os.path.join(working_dir, 'OxfordPets', 'test')
-pets_train_orig = torchvision.datasets.OxfordIIITPet(root=pets_path_train, split="trainval", target_types="segmentation", download=True)
-pets_test_orig = torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
 
-transform_dict = args_to_dict(
-    pre_transform=T.ToTensor(),
-    pre_target_transform=T.ToTensor(),
-    common_transform=T.Compose([
-        # Random Horizontal Flip as data augmentation.
-        T.RandomHorizontalFlip(p=0.5)
-    ]),
-    post_transform=T.Compose([
-        T.Resize((128, 128), interpolation=T.InterpolationMode.BILINEAR),
-        # Color Jitter as data augmentation.
-        T.ColorJitter(contrast=0.3),
-    ]),
-    post_target_transform=T.Compose([
-        T.Resize((128, 128), interpolation=T.InterpolationMode.NEAREST),
-        T.Lambda(tensor_trimap),
-    ]))
-
-pets_train = OxfordIIITPetsAugmented(
-    root=pets_path_train,
-    split="trainval",
-    target_types="segmentation",
-    download=False,
-    **transform_dict,
-)
-pets_test = OxfordIIITPetsAugmented(
-    root=pets_path_test,
-    split="test",
-    target_types="segmentation",
-    download=False,
-    **transform_dict,
-)
-
-pets_train_loader = torch.utils.data.DataLoader(
-    pets_train,
-    batch_size=64,
-    shuffle=True,
-)
-pets_test_loader = torch.utils.data.DataLoader(
-    pets_test,
-    batch_size=21,
-    shuffle=True,
-)
-
-#묵업데이터: 실제 학습할 때는 False로 바꿔야 함. VS Code에서 빠르게 테스트하기 위해 True로 설정한 것.
-
-USE_MOCK = True  # VS Code 테스트용. Colab 실제 학습할 때는 False
-
-if USE_MOCK:
-    num_class = 3
-    mock_n = 8
-    mock_h = 128
-    mock_w = 128
-
-    mock_inputs = torch.randn(mock_n, 3, mock_h, mock_w)
-    mock_targets = torch.randint(
-        low=0,
-        high=num_class,
-        size=(mock_n, 1, mock_h, mock_w)
-    )
-
-    mock_dataset = TensorDataset(mock_inputs, mock_targets)
-
-    dataloaders = {
-        "train": DataLoader(mock_dataset, batch_size=2, shuffle=True),
-        "val": DataLoader(mock_dataset, batch_size=2, shuffle=False),
-    }
-
-else:
-    dataloaders = {
-        "train": pets_train_loader,
-        "val": pets_test_loader
-    }
-
-
-def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
+def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_epochs=25, patience=5, use_mock=False):
     # wandb initialization
-    if not USE_MOCK:
+    if not use_mock:
         wandb.init(
             project="PetMask",
             config={
@@ -228,7 +149,7 @@ def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
             print("Early stopping triggered. Training halted.")
             break
         
-    if not USE_MOCK:
+    if not use_mock:
         wandb.finish()
 
     print('Best val loss: {:4f}'.format(best_loss))
@@ -238,21 +159,83 @@ def train_model(model, optimizer, scheduler, num_epochs=25, patience=5):
     return model
 
 
-num_class = 3
-model = ResNetUNet(num_class).to(device)
+def get_args():
+    parser = argparse.ArgumentParser(description="PetMask Training Script")
+    parser.add_argument("--data_dir", type=str, default="/home/sehoon/workspace/PetMask/src/dataset", help="Dataset root directory")
+    parser.add_argument("--batch_size", type=int, default=64, help="Input batch size")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
+    parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Checkpoint file name")
+    parser.add_argument("--use_mock", action="store_true", help="Use mock data for quick testing")
+    return parser.parse_args()
 
-# freeze backbone layers
-for l in model.base_layers:
-  for param in l.parameters():
-    param.requires_grad = False
+def main():
+    args = get_args()
 
-#filter(조건함수, 데이터)
-# ex) filter(lambda x: x>10, numbers) numbers=[1,10, 20, 30, 40]
-optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+    if args.use_mock:
+        num_class = 3
+        mock_n, mock_h, mock_w = 8, 128, 128
+        mock_inputs = torch.randn(mock_n, 3, mock_h, mock_w)
+        mock_targets = torch.randint(low=0, high=num_class, size=(mock_n, 1, mock_h, mock_w))
+        mock_dataset = TensorDataset(mock_inputs, mock_targets)
+        dataloaders = {
+            "train": DataLoader(mock_dataset, batch_size=2, shuffle=True),
+            "val": DataLoader(mock_dataset, batch_size=2, shuffle=False),
+        }
+        num_epochs, patience = 1, 1
+    else:
+        num_class = 3
+        working_dir = args.data_dir
+        pets_path_train = os.path.join(working_dir, 'OxfordPets', 'train')
+        pets_path_test = os.path.join(working_dir, 'OxfordPets', 'test')
+        
+        # Ensure data is downloaded
+        torchvision.datasets.OxfordIIITPet(root=pets_path_train, split="trainval", target_types="segmentation", download=True)
+        torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
 
-exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=8, gamma=0.1)
+        transform_dict = args_to_dict(
+            pre_transform=T.ToTensor(),
+            pre_target_transform=T.ToTensor(),
+            common_transform=T.Compose([T.RandomHorizontalFlip(p=0.5)]),
+            post_transform=T.Compose([
+                T.Resize((128, 128), interpolation=T.InterpolationMode.BILINEAR),
+                T.ColorJitter(contrast=0.3),
+            ]),
+            post_target_transform=T.Compose([
+                T.Resize((128, 128), interpolation=T.InterpolationMode.NEAREST),
+                T.Lambda(tensor_trimap),
+            ]))
 
-if USE_MOCK:
-    model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=1, patience=1)
-else:
-    model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=100, patience=5)
+        pets_train = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", target_types="segmentation", download=False, **transform_dict)
+        pets_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
+
+        dataloaders = {
+            "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
+            "val": DataLoader(pets_test, batch_size=21, shuffle=True)
+        }
+        num_epochs, patience = args.epochs, args.patience
+
+    model = ResNetUNet(num_class).to(device)
+
+    # freeze backbone layers
+    for l in model.base_layers:
+        for param in l.parameters():
+            param.requires_grad = False
+
+    optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=8, gamma=0.1)
+
+    train_model(
+        model, 
+        dataloaders, 
+        optimizer_ft, 
+        exp_lr_scheduler, 
+        checkpoint_path=args.checkpoint,
+        num_epochs=num_epochs, 
+        patience=patience,
+        use_mock=args.use_mock
+    )
+
+if __name__ == "__main__":
+    main()
