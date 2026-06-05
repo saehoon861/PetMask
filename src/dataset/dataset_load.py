@@ -120,65 +120,65 @@ def tensor_trimap(t):
 def args_to_dict(**kwargs):
     return kwargs
     
-transform_dict = args_to_dict(
-    pre_transform=T.ToTensor(),
-    pre_target_transform=T.ToTensor(),
-    common_transform=T.Compose([
-        # Random Horizontal Flip as data augmentation.
-        T.RandomHorizontalFlip(p=0.5)
-    ]),
-    post_transform=T.Compose([
-        T.Resize((128, 128), interpolation=T.InterpolationMode.BILINEAR),
-        # Color Jitter as data augmentation.
-        T.ColorJitter(contrast=0.3),
-    ]),
-    post_target_transform=T.Compose([
-        T.Resize((128, 128), interpolation=T.InterpolationMode.NEAREST),
-        T.Lambda(tensor_trimap),
-    ]))
+# transform_dict = args_to_dict(
+#     pre_transform=T.ToTensor(),
+#     pre_target_transform=T.ToTensor(),
+#     common_transform=T.Compose([
+#         # Random Horizontal Flip as data augmentation.
+#         T.RandomHorizontalFlip(p=0.5)
+#     ]),
+#     post_transform=T.Compose([
+#         T.Resize((128, 128), interpolation=T.InterpolationMode.BILINEAR),
+#         # Color Jitter as data augmentation.
+#         T.ColorJitter(contrast=0.3),
+#     ]),
+#     post_target_transform=T.Compose([
+#         T.Resize((128, 128), interpolation=T.InterpolationMode.NEAREST),
+#         T.Lambda(tensor_trimap),
+#     ]))
 
 
     
-pets_train = OxfordIIITPetsAugmented(
-    root=pets_path_train,
-    split="trainval",
-    target_types="segmentation",
-    download=False,
-    **transform_dict,
-)
-pets_test = OxfordIIITPetsAugmented(
-    root=pets_path_test,
-    split="test",
-    target_types="segmentation",
-    download=False,
-    **transform_dict,
-)
+# pets_train = OxfordIIITPetsAugmented(
+#     root=pets_path_train,
+#     split="trainval",
+#     target_types="segmentation",
+#     download=False,
+#     **transform_dict,
+# )
+# pets_test = OxfordIIITPetsAugmented(
+#     root=pets_path_test,
+#     split="test",
+#     target_types="segmentation",
+#     download=False,
+#     **transform_dict,
+# )
 
-pets_train_loader = torch.utils.data.DataLoader(
-    pets_train,
-    batch_size=64,
-    shuffle=True,
-)
-pets_test_loader = torch.utils.data.DataLoader(
-    pets_test,
-    batch_size=21,
-    shuffle=True,
-)
+# pets_train_loader = torch.utils.data.DataLoader(
+#     pets_train,
+#     batch_size=64,
+#     shuffle=True,
+# )
+# pets_test_loader = torch.utils.data.DataLoader(
+#     pets_test,
+#     batch_size=21,
+#     shuffle=True,
+# )
 
-(train_pets_inputs, train_pets_targets) = next(iter(pets_train_loader))
-(test_pets_inputs, test_pets_targets) = next(iter(pets_test_loader))
+# (train_pets_inputs, train_pets_targets) = next(iter(pets_train_loader))
+# (test_pets_inputs, test_pets_targets) = next(iter(pets_test_loader))
 
-print(f"Batch of training inputs shape: {train_pets_inputs.shape}")
-print(f"Batch of training targets shape: {train_pets_targets.shape}")
+# print(f"Batch of training inputs shape: {train_pets_inputs.shape}")
+# print(f"Batch of training targets shape: {train_pets_targets.shape}")
 
 
-pets_input_grid = torchvision.utils.make_grid(train_pets_inputs, nrow=8)
-plt.imshow(t2img(pets_input_grid))
-plt.axis("off")
-plt.show()
+# pets_input_grid = torchvision.utils.make_grid(train_pets_inputs, nrow=8)
+# plt.imshow(t2img(pets_input_grid))
+# plt.axis("off")
+# plt.show()
 
-pets_targets_grid = torchvision.utils.make_grid(train_pets_targets / 2.0, nrow=8)
-plt.imshow(t2img(pets_targets_grid))
-plt.axis("off")
-plt.show()
+# pets_targets_grid = torchvision.utils.make_grid(train_pets_targets / 2.0, nrow=8)
+# plt.imshow(t2img(pets_targets_grid))
+# plt.axis("off")
+# plt.show()
 
