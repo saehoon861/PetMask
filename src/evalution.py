@@ -108,7 +108,8 @@ class SegmentationMetrics(object):
         # fp = np.sum(matrix[1, :])
         # fn = np.sum(matrix[2, :])
 
-        # Correct Pixel Accuracy: Total Correct / Total Pixels
+        # Global Pixel Accuracy: (Sum of all TPs) / (Total Number of Pixels)
+        # Total Pixels = Total TP + Total FN (정답지 기준 모든 픽셀의 합)
         pixel_acc = (np.sum(matrix[0, :]) + self.eps) / (np.sum(matrix[0, :] + matrix[2, :]) + self.eps)
         dice = (2 * matrix[0] + self.eps) / (2 * matrix[0] + matrix[1] + matrix[2] + self.eps)
         iou = (matrix[0] + self.eps) / (matrix[0] + matrix[1] + matrix[2] + self.eps)
@@ -225,7 +226,40 @@ def visualize_prediction(image, target, prediction, save_path=None):
 
     if save_path:
         plt.savefig(save_path)
-    plt.show()
+    else:
+        plt.show()
+    plt.close()
+
+def calculate_confusion_matrix(y_true, y_pred, num_classes):
+    """픽셀 단위의 오차 행렬을 계산합니다."""
+    y_true = y_true.view(-1).cpu().numpy().astype(int)
+    y_pred = y_pred.view(-1).cpu().numpy().astype(int)
+    cm = np.bincount(num_classes * y_true + y_pred, minlength=num_classes**2)
+    return cm.reshape(num_classes, num_classes)
+
+def plot_confusion_matrix(cm, class_names, save_path):
+    """오차 행렬을 시각화하여 저장합니다."""
+    plt.figure(figsize=(10, 8))
+    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    plt.title('Confusion Matrix (Pixel-wise)')
+    plt.colorbar()
+    tick_marks = np.arange(len(class_names))
+    plt.xticks(tick_marks, class_names, rotation=45)
+    plt.yticks(tick_marks, class_names)
+
+    # 행렬 내부에 수치 표시
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            plt.text(j, i, format(int(cm[i, j]), 'd'),
+                     ha="center", va="center",
+                     color="white" if cm[i, j] > thresh else "black")
+
+    plt.tight_layout()
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.savefig(save_path)
+    plt.close()
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -244,6 +278,11 @@ def run_evaluation(checkpoint_path, data_dir, batch_size=21):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_classes = 3
+
+    # 0. Output 폴더 생성 (src/output)
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     # 1. 모델 로드
     model = ResNetUNet(num_classes).to(device)
@@ -292,6 +331,7 @@ def run_evaluation(checkpoint_path, data_dir, batch_size=21):
     metric_calc = SegmentationMetrics(average=True, ignore_background=False, activation='0-1')
 
     total_metrics = np.zeros(5) # pixel_acc, dice, iou, precision, recall
+    global_cm = np.zeros((num_classes, num_classes))
     samples = 0
 
     print("Evaluating...")
@@ -301,8 +341,10 @@ def run_evaluation(checkpoint_path, data_dir, batch_size=21):
             masks = masks.to(device).squeeze(1).long() # (N, H, W)
 
             outputs = model(images) # (N, C, H, W)
+            preds = torch.argmax(outputs, dim=1)
             
             results = metric_calc(masks, outputs)
+            global_cm += calculate_confusion_matrix(masks, preds, num_classes)
             total_metrics += np.array(results) * images.size(0)
             samples += images.size(0)
 
@@ -314,6 +356,11 @@ def run_evaluation(checkpoint_path, data_dir, batch_size=21):
     print(f"mIoU:           {avg_metrics[2]:.4f}")
     print(f"Precision:      {avg_metrics[3]:.4f}")
     print(f"Recall:         {avg_metrics[4]:.4f}")
+
+    # Confusion Matrix 저장
+    class_names = ['Pet', 'Background', 'Border']
+    plot_confusion_matrix(global_cm, class_names, os.path.join(output_dir, "confusion_matrix.png"))
+    print(f"\nConfusion matrix saved to {os.path.join(output_dir, 'confusion_matrix.png')}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
