@@ -237,23 +237,31 @@ def calculate_confusion_matrix(y_true, y_pred, num_classes):
     cm = np.bincount(num_classes * y_true + y_pred, minlength=num_classes**2)
     return cm.reshape(num_classes, num_classes)
 
-def plot_confusion_matrix(cm, class_names, save_path):
+def plot_confusion_matrix(cm, class_names, save_path, normalize=True):
     """오차 행렬을 시각화하여 저장합니다."""
+    if normalize:
+        # 행(True Label)의 합으로 각 원소를 나누어 백분율(0~1)로 변환
+        cm_norm = cm.astype('float') / (cm.sum(axis=1)[:, np.newaxis] + 1e-5)
+        title = 'Normalized Confusion Matrix'
+    else:
+        cm_norm = cm
+        title = 'Confusion Matrix (Pixel Count)'
+
     plt.figure(figsize=(10, 8))
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title('Confusion Matrix (Pixel-wise)')
+    plt.imshow(cm_norm, interpolation='nearest', cmap=plt.cm.Blues)
+    plt.title(title)
     plt.colorbar()
     tick_marks = np.arange(len(class_names))
     plt.xticks(tick_marks, class_names, rotation=45)
     plt.yticks(tick_marks, class_names)
 
-    # 행렬 내부에 수치 표시
-    thresh = cm.max() / 2.
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            plt.text(j, i, format(int(cm[i, j]), 'd'),
+    thresh = cm_norm.max() / 2.
+    for i in range(cm_norm.shape[0]):
+        for j in range(cm_norm.shape[1]):
+            val = f"{cm_norm[i, j]:.2f}" if normalize else format(int(cm_norm[i, j]), 'd')
+            plt.text(j, i, val,
                      ha="center", va="center",
-                     color="white" if cm[i, j] > thresh else "black")
+                     color="white" if cm_norm[i, j] > thresh else "black")
 
     plt.tight_layout()
     plt.ylabel('True Label')
