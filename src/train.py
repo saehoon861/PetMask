@@ -14,7 +14,7 @@ import torchvision.transforms as T
 import wandb
 import torch.optim as optim
 from torch.optim import lr_scheduler
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import TensorDataset, DataLoader, random_split
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Sigmoid + BCEWithLogits
@@ -192,7 +192,6 @@ def main():
         
         # Ensure data is downloaded
         torchvision.datasets.OxfordIIITPet(root=pets_path_train, split="trainval", target_types="segmentation", download=True)
-        torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
 
         transform_dict = args_to_dict(
             pre_transform=T.ToTensor(),
@@ -207,12 +206,16 @@ def main():
                 T.Lambda(tensor_trimap),
             ]))
 
-        pets_train = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", target_types="segmentation", download=False, **transform_dict)
-        pets_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
+        # split="trainval" 데이터를 가져와서 실제 Train과 Val로 분리
+        full_dataset = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", target_types="segmentation", download=False, **transform_dict)
+        
+        train_size = int(0.8 * len(full_dataset))
+        val_size = len(full_dataset) - train_size
+        pets_train, pets_val = random_split(full_dataset, [train_size, val_size])
 
         dataloaders = {
             "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
-            "val": DataLoader(pets_test, batch_size=21, shuffle=True)
+            "val": DataLoader(pets_val, batch_size=21, shuffle=False) # Shuffle False 권장
         }
         num_epochs, patience = args.epochs, args.patience
 
