@@ -3,6 +3,7 @@ import argparse
 import torch
 import torch.nn.functional as F
 from losses.loss import multiclass_dice_loss
+from evalution import SegmentationMetrics  # Metrics 계산기 임포트
 from dataset.dataset_load import OxfordIIITPetsAugmented
 from dataset.dataset_load import tensor_trimap
 from dataset.dataset_load import args_to_dict
@@ -58,6 +59,34 @@ def print_metrics(metrics, epoch_samples, phase):
 
     print("{}: {}".format(phase, ", ".join(outputs)))
     
+def log_images_to_wandb(inputs, labels, outputs, epoch):
+    """
+    WandB에 예측 결과 이미지를 업로드하는 함수
+    """
+    # 한 배치에서 최대 4개까지만 시각화
+    num_images = min(inputs.size(0), 4)
+    images_list = []
+    
+    preds = torch.argmax(outputs, dim=1) # (N, H, W)
+    
+    for i in range(num_images):
+        img = inputs[i].cpu().permute(1, 2, 0).numpy()
+        # Denormalize if necessary (assuming ToTensor() [0, 1] range)
+        img = (img - img.min()) / (img.max() - img.min() + 1e-5)
+        
+        gt = labels[i].squeeze().cpu().numpy()
+        pred = preds[i].cpu().numpy()
+        
+        images_list.append(wandb.Image(img, caption=f"Original_{i}"))
+        images_list.append(wandb.Image(gt / 2.0, caption=f"GT_{i}")) # 0,1,2 scale for better visibility
+        images_list.append(wandb.Image(pred / 2.0, caption=f"Pred_{i}"))
+
+    wandb.log({
+        "Visuals/Predictions": images_list
+    }, step=epoch)
+
+
+
 
 def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_epochs=25, patience=5, use_mock=False):
     # wandb initialization
@@ -76,6 +105,9 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     best_loss = 1e10
     stop_count = 0
 
+    # 메트릭 계산기 초기화 (평균 IoU 등 계산용)
+    metric_calc = SegmentationMetrics(average=True, ignore_background=False, activation='0-1')
+
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
@@ -90,6 +122,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
             metrics = defaultdict(float)
             epoch_samples = 0
+            total_iou, total_pixel_acc = 0, 0
 
             for inputs, labels in dataloaders[phase]:
                 inputs = inputs.to(device)
@@ -108,16 +141,37 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                     outputs = model(inputs)
                     loss = calc_loss(outputs, labels, metrics)
 
+                    # 성능 메트릭 계산 (IoU, Acc)
+                    with torch.no_grad():
+                        # target은 (N, H, W) 형태여야 함
+                        target_for_metric = labels.squeeze(1).long()
+                        pixel_acc, _, iou, _, _ = metric_calc(target_for_metric, outputs)
+                        total_iou += iou * inputs.size(0)
+                        total_pixel_acc += pixel_acc * inputs.size(0)
+
                     # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
                         optimizer.step()
+
+                # 시각화 로그: 검증 단계의 첫 번째 배치 이미지만 기록
+                if phase == 'val' and epoch_samples == 0 and not use_mock:
+                    log_images_to_wandb(inputs, labels, outputs, epoch)
 
                 # statistics
                 epoch_samples += inputs.size(0)
 
             print_metrics(metrics, epoch_samples, phase)
             epoch_loss = metrics['loss'] / epoch_samples
+
+            if not use_mock:
+                wandb.log({
+                    f"{phase}/loss": epoch_loss,
+                    f"{phase}/ce": metrics['ce'] / epoch_samples,
+                    f"{phase}/dice": metrics['dice'] / epoch_samples,
+                    f"{phase}/mIoU": total_iou / epoch_samples,
+                    f"{phase}/pixel_acc": total_pixel_acc / epoch_samples,
+                }, step=epoch)
 
             if phase == 'train':
               scheduler.step()
@@ -129,7 +183,10 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
             
 
               for param_group in optimizer.param_groups:
-                  print("LR", param_group['lr'])
+                  lr = param_group['lr']
+                  print("LR", lr)
+                  if not use_mock:
+                      wandb.log({"learning_rate": lr}, step=epoch)
 
             if phase == 'val':
                 # save the model weights if validation loss improved
