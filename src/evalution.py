@@ -4,8 +4,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset, random_split
 import torchvision.transforms as T
+import random
+import numpy as np
 
 
 class SegmentationMetrics(object):
@@ -225,8 +227,19 @@ def visualize_prediction(image, target, prediction, save_path=None):
         plt.savefig(save_path)
     plt.show()
 
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 def run_evaluation(checkpoint_path, data_dir, batch_size=21):
-    from dataset.dataset_load import OxfordIIITPetsAugmented, tensor_trimap, args_to_dict
+    # 평가 시에도 동일한 데이터 분할을 보장하기 위해 시드 설정
+    set_seed(42)
+
+    from dataset.dataset_load import OxfordIIITPetsAugmented, tensor_trimap, args_to_dict, working_dir
     from models.model import ResNetUNet
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -256,9 +269,23 @@ def run_evaluation(checkpoint_path, data_dir, batch_size=21):
             T.Lambda(tensor_trimap),
         ]))
 
-    pets_path_test = os.path.join(data_dir, 'OxfordPets', 'test')
-    test_dataset = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    # train.py와 동일하게 전체 데이터를 합친 후 분할
+    pets_path_train = os.path.join(working_dir, 'OxfordPets', 'train')
+    pets_path_test = os.path.join(working_dir, 'OxfordPets', 'test')
+
+    ds_trainval = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", target_types="segmentation", download=False, **transform_dict)
+    ds_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
+    all_data = ConcatDataset([ds_trainval, ds_test])
+
+    total_len = len(all_data)
+    test_len = int(0.2 * total_len)
+    val_len = int(0.1 * total_len)
+    train_len = total_len - (test_len + val_len)
+
+    # manual_seed(42)를 사용하여 train.py에서 떼어놓은 것과 '정확히 동일한' 20% 테스트셋을 가져옴
+    _, _, pets_test = random_split(all_data, [train_len, val_len, test_len], generator=torch.Generator().manual_seed(42))
+
+    test_loader = DataLoader(pets_test, batch_size=batch_size, shuffle=False)
 
     # 3. 메트릭 계산기 초기화
     # Oxford Pets 라벨 0, 1, 2를 모두 평가하기 위해 ignore_background=False 설정

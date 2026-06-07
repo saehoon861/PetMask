@@ -16,8 +16,23 @@ import wandb
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import TensorDataset, DataLoader, random_split, ConcatDataset
+import random
+import numpy as np
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def set_seed(seed=42):
+    """학습 재현성을 위해 모든 랜덤 시드를 고정합니다."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed) # 멀티 GPU 사용 시
+    # CUDA 연산의 결정론적 동작 설정
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"Random seed fixed to: {seed}")
+
 # Sigmoid + BCEWithLogits
 # - 출력: [N, 6, H, W]
 # - 6개의 마스크 채널을 각각 독립적인 binary 문제로 봄
@@ -226,10 +241,14 @@ def get_args():
     parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Checkpoint file name")
     parser.add_argument("--use_mock", action="store_true", help="Use mock data for quick testing")
     parser.add_argument("--ce_weight", type=float, default=0.5)
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 def main():
     args = get_args()
+
+    # 학습 시작 전 시드 고정 (기본값 42)
+    set_seed(args.seed)
 
     if args.use_mock:
         num_class = 3
