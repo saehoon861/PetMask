@@ -225,6 +225,7 @@ def get_args():
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
     parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Checkpoint file name")
     parser.add_argument("--use_mock", action="store_true", help="Use mock data for quick testing")
+    parser.add_argument("--ce_weight", type=float, default=0.5)
     return parser.parse_args()
 
 def main():
@@ -289,7 +290,7 @@ def main():
 
         dataloaders = {
             "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
-            "val": DataLoader(pets_val, batch_size=21, shuffle=False)
+            "val": DataLoader(pets_val, batch_size=args.batch_size, shuffle=False)
         }
         num_epochs, patience = args.epochs, args.patience
 
