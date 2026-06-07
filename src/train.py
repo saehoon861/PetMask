@@ -276,11 +276,11 @@ def main():
             pre_target_transform=T.ToTensor(),
             common_transform=T.Compose([T.RandomHorizontalFlip(p=0.5)]),
             post_transform=T.Compose([
-                T.Resize((128, 128), interpolation=T.InterpolationMode.BILINEAR),
+                T.Resize((256, 256), interpolation=T.InterpolationMode.BILINEAR),
                 T.ColorJitter(contrast=0.3),
             ]),
             post_target_transform=T.Compose([
-                T.Resize((128, 128), interpolation=T.InterpolationMode.NEAREST),
+                T.Resize((256, 256), interpolation=T.InterpolationMode.NEAREST),
                 T.Lambda(tensor_trimap),
             ]))
 
