@@ -14,7 +14,7 @@ import torchvision.transforms as T
 import wandb
 import torch.optim as optim
 from torch.optim import lr_scheduler
-from torch.utils.data import TensorDataset, DataLoader, random_split
+from torch.utils.data import TensorDataset, DataLoader, random_split, ConcatDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Sigmoid + BCEWithLogits
@@ -207,15 +207,21 @@ def main():
                 T.Lambda(tensor_trimap),
             ]))
 
-        # split="trainval" 데이터를 가져와서 실제 Train과 Val로 분리
-        full_dataset = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", target_types="segmentation", download=False, **transform_dict)
-        
-        train_size = int(0.8 * len(full_dataset))
-        val_size = len(full_dataset) - train_size
-        pets_train, pets_val = random_split(full_dataset, [train_size, val_size])
+        # 1. 모든 데이터를 로드하여 하나로 합칩니다 (Pooling)
+        ds_trainval = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", target_types="segmentation", download=False, **transform_dict)
+        ds_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
+        all_data = ConcatDataset([ds_trainval, ds_test])
 
-        # split="test" 데이터 로드 (비율 확인용)
-        pets_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
+        # 2. 전체 데이터 중 20%를 최종 테스트용으로 분리합니다.
+        total_len = len(all_data)
+        test_len = int(0.2 * total_len)
+        train_val_len = total_len - test_len
+        train_val_dataset, pets_test = random_split(all_data, [train_val_len, test_len], generator=torch.Generator().manual_seed(42))
+
+        # 3. 남은 80% 데이터 중 10%를 검증용으로, 나머지를 학습용으로 분산합니다.
+        val_len = int(0.1 * train_val_len)
+        train_len = train_val_len - val_len
+        pets_train, pets_val = random_split(train_val_dataset, [train_len, val_len], generator=torch.Generator().manual_seed(42))
 
         # 전체 데이터셋 요약 정보 출력
         total_samples = len(pets_train) + len(pets_val) + len(pets_test)
@@ -230,7 +236,7 @@ def main():
 
         dataloaders = {
             "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
-            "val": DataLoader(pets_val, batch_size=21, shuffle=False) # Shuffle False 권장
+            "val": DataLoader(pets_val, batch_size=21, shuffle=False)
         }
         num_epochs, patience = args.epochs, args.patience
 
