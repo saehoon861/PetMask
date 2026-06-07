@@ -212,16 +212,12 @@ def main():
         ds_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
         all_data = ConcatDataset([ds_trainval, ds_test])
 
-        # 2. 전체 데이터 중 20%를 최종 테스트용으로 분리합니다.
+        # 2. 모든 길이를 전체 데이터(total_len) 기준으로 계산하여 70:10:20 비율을 맞춥니다.
         total_len = len(all_data)
         test_len = int(0.2 * total_len)
-        train_val_len = total_len - test_len
-        train_val_dataset, pets_test = random_split(all_data, [train_val_len, test_len], generator=torch.Generator().manual_seed(42))
-
-        # 3. 남은 80% 데이터 중 10%를 검증용으로, 나머지를 학습용으로 분산합니다.
-        val_len = int(0.1 * train_val_len)
-        train_len = train_val_len - val_len
-        pets_train, pets_val = random_split(train_val_dataset, [train_len, val_len], generator=torch.Generator().manual_seed(42))
+        val_len = int(0.1 * total_len)
+        train_len = total_len - (test_len + val_len)
+        pets_train, pets_val, pets_test = random_split(all_data, [train_len, val_len, test_len], generator=torch.Generator().manual_seed(42))
 
         # 전체 데이터셋 요약 정보 출력
         total_samples = len(pets_train) + len(pets_val) + len(pets_test)
