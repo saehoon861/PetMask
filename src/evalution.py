@@ -109,7 +109,7 @@ class SegmentationMetrics(object):
         # fn = np.sum(matrix[2, :])
 
         # Correct Pixel Accuracy: Total Correct / Total Pixels
-        pixel_acc = (np.sum(matrix[0, :]) + self.eps) / (np.sum(matrix.sum(axis=0)) / 2 + self.eps) # simplified batch-wide acc
+        pixel_acc = (np.sum(matrix[0, :]) + self.eps) / (np.sum(matrix[0, :] + matrix[2, :]) + self.eps)
         dice = (2 * matrix[0] + self.eps) / (2 * matrix[0] + matrix[1] + matrix[2] + self.eps)
         iou = (matrix[0] + self.eps) / (matrix[0] + matrix[1] + matrix[2] + self.eps)
         precision = (matrix[0] + self.eps) / (matrix[0] + matrix[1] + self.eps)
