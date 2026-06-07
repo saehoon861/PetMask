@@ -192,6 +192,7 @@ def main():
         
         # Ensure data is downloaded
         torchvision.datasets.OxfordIIITPet(root=pets_path_train, split="trainval", target_types="segmentation", download=True)
+        torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
 
         transform_dict = args_to_dict(
             pre_transform=T.ToTensor(),
@@ -212,6 +213,20 @@ def main():
         train_size = int(0.8 * len(full_dataset))
         val_size = len(full_dataset) - train_size
         pets_train, pets_val = random_split(full_dataset, [train_size, val_size])
+
+        # split="test" 데이터 로드 (비율 확인용)
+        pets_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
+
+        # 전체 데이터셋 요약 정보 출력
+        total_samples = len(pets_train) + len(pets_val) + len(pets_test)
+        print("\n" + "="*40)
+        print(f"{'Dataset Split Information':^40}")
+        print("-" * 40)
+        print(f" Train samples: {len(pets_train):>5} ({len(pets_train)/total_samples*100:>5.1f}%)")
+        print(f" Val samples:   {len(pets_val):>5} ({len(pets_val)/total_samples*100:>5.1f}%)")
+        print(f" Test samples:  {len(pets_test):>5} ({len(pets_test)/total_samples*100:>5.1f}%)")
+        print(f" Total:         {total_samples:>5} (100.0%)")
+        print("="*40 + "\n")
 
         dataloaders = {
             "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
