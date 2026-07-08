@@ -299,7 +299,7 @@ def main():
         train_transform = A.Compose([
             A.LongestMaxSize(max_size=IMG_SIZE),
             A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=2), # Pad with background value
-            A.RandomHorizontalFlip(p=0.5),
+            A.HorizontalFlip(p=0.5),
             A.ColorJitter(p=0.5, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
             A.Normalize(),
             ToTensorV2(),
