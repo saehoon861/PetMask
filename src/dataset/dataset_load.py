@@ -48,7 +48,21 @@ class TrimapClass(IntEnum):
 #BCEWithLogitsLoss는 시그모이드 활성화 함수와 이진 교차 엔트로피 손실을 결합한 손실 함수 이 함수는 정답이 float형을 필요로 함
 # tripmap를 통해서 mask를 0 0.5 1로 바꿔주는 함수 0 = 클래스1이 절대 아님 1 = 클래스1이 확실히 맞음 0.5 = 클래스1인지 클래스0인지 확실하지 않음
 def trimap2f(trimap):
-    return (img2t(trimap) * 255.0 - 1) / 2
+    # Convert PIL Image to tensor to get original integer values {1, 2, 3}
+    t = (img2t(trimap) * 255.0).long()
+    
+    # Create a new float tensor for the target soft labels
+    target = torch.full_like(t, 0.0, dtype=torch.float32)
+    
+    # Apply the mapping based on the comments' intention
+    # Pet (value 1) becomes 1.0
+    target[t == 1] = 1.0
+    # Background (value 2) becomes 0.0
+    target[t == 2] = 0.0
+    # Border (value 3) becomes 0.5 (uncertain)
+    target[t == 3] = 0.5
+    
+    return target
     
 # plt.imshow(t2img(trimap2f(train_pets_target)))
 # plt.axis("off")
@@ -64,50 +78,28 @@ print("변환된 마스크 :", np.unique(mask_converted))
 
 
 class OxfordIIITPetsAugmented(torchvision.datasets.OxfordIIITPet):
-    def __init__(
-        self,
-        root: str,
-        split: str,
-        target_types="segmentation",
-        download=False,
-        pre_transform=None,
-        post_transform=None,
-        pre_target_transform=None,
-        post_target_transform=None,
-        common_transform=None,
-    ):
-        super().__init__(
-            root=root,
-            split=split,
-            target_types=target_types,
-            download=download,
-            transform=pre_transform,
-            target_transform=pre_target_transform,
-        )
-        self.post_transform = post_transform
-        self.post_target_transform = post_target_transform
-        self.common_transform = common_transform
-
-    def __len__(self):
-        return super().__len__()
+    def __init__(self, root: str, split: str, transform=None, **kwargs):
+        super().__init__(root=root, split=split, target_types="segmentation", **kwargs)
+        self.transform = transform
 
     def __getitem__(self, idx):
-        (input, target) = super().__getitem__(idx)
-        
-        #comm_transform이 존재한다면 input과 target을 하나로 묶어서 
-        # common_transform을 적용한 후 다시 input과 target으로 나누는 과정
-        if self.common_transform is not None:
-            both = torch.cat([input, target], dim=0)
-            both = self.common_transform(both)
-            (input, target) = torch.split(both, 3, dim=0)
-        # end if
-        
-        if self.post_transform is not None:
-            input = self.post_transform(input)
-        if self.post_target_transform is not None:
-            target = self.post_target_transform(target)
+        # super() returns a PIL image and a PIL mask
+        image, mask = super().__getitem__(idx)
 
-        return (input, target)
+        # Convert PIL to NumPy for Albumentations
+        image_np = np.array(image)
+        mask_np = np.array(mask)
+
+        if self.transform:
+            augmented = self.transform(image=image_np, mask=mask_np)
+            image = augmented['image']
+            mask = augmented['mask']
+        
+        # After augmentations, mask is a NumPy array. We apply trimap2f.
+        # trimap2f is designed to take a PIL image or NumPy array and convert to a soft-label tensor.
+        mask = trimap2f(mask)
+        
+        return image, mask
     
     
 def tensor_trimap(t):

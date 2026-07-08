@@ -2,11 +2,12 @@ from collections import defaultdict
 import argparse
 import torch
 import torch.nn.functional as F
-from losses.loss import multiclass_dice_loss
-from evalution import SegmentationMetrics  # Metrics 계산기 임포트
-from dataset.dataset_load import OxfordIIITPetsAugmented
-from dataset.dataset_load import tensor_trimap
-from dataset.dataset_load import args_to_dict
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+import cv2
+
+from evalution import BinaryMetrics  # Metrics 계산기 임포트
+from dataset.dataset_load import OxfordIIITPetsAugmented, trimap2f, args_to_dict
 from models.model import ResNetUNet
 import time
 import torchvision
@@ -53,15 +54,30 @@ def set_seed(seed=42):
 
 #BCE: 한 픽셀이 잘 맞췄는가
 #dice loss: 예측 마스크 전체와 정답 마스크 전체가 얼마나 겹치는가?
-def calc_loss(pred, target, metrics, ce_weight=0.5):
-    target = target.squeeze(1).long()
+def dice_loss(pred, target, smooth=1.):
+    pred = torch.sigmoid(pred)
+    intersection = (pred * target).sum(dim=(1, 2))
+    union = pred.sum(dim=(1, 2)) + target.sum(dim=(1, 2))
+    dice = (2. * intersection + smooth) / (union + smooth)
+    return 1 - dice.mean()
 
-    ce = F.cross_entropy(pred, target)
-    dice = multiclass_dice_loss(pred, target)
+def calc_loss(pred, target, metrics, bce_weight=0.5):
+    # The model outputs 3 channels, but for this binary problem,
+    # we assume the first channel corresponds to the 'pet' class.
+    pred_pet = pred[:, 0]
+      # Ensure target is float for BCE and Dice loss
 
-    loss = ce * ce_weight + dice * (1 - ce_weight)
+    # Target is already a float tensor (0.0, 0.5, 1.0)
+    # Squeeze the channel dimension if it exists
+    if target.dim() == 4 and target.shape[1] == 1:
+        target = target.squeeze(1)
+    target = target.float()
+    bce = F.binary_cross_entropy_with_logits(pred_pet, target)
+    dice = dice_loss(pred_pet, target)
 
-    metrics["ce"] += ce.detach().cpu().item() * target.size(0)
+    loss = bce * bce_weight + dice * (1 - bce_weight)
+
+    metrics["bce"] += bce.detach().cpu().item() * target.size(0)
     metrics["dice"] += dice.detach().cpu().item() * target.size(0)
     metrics["loss"] += loss.detach().cpu().item() * target.size(0)
 
@@ -121,7 +137,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     stop_count = 0
 
     # 메트릭 계산기 초기화 (평균 IoU 등 계산용)
-    metric_calc = SegmentationMetrics(average=True, ignore_background=False, activation='0-1')
+    metric_calc = BinaryMetrics(activation='sigmoid')
 
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
@@ -137,7 +153,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
             metrics = defaultdict(float)
             epoch_samples = 0
-            total_iou, total_pixel_acc = 0, 0
+            total_dice, total_pixel_acc = 0, 0
 
             for inputs, labels in dataloaders[phase]:
                 inputs = inputs.to(device)
@@ -158,10 +174,16 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
                     # 성능 메트릭 계산 (IoU, Acc)
                     with torch.no_grad():
-                        # target은 (N, H, W) 형태여야 함
-                        target_for_metric = labels.squeeze(1).long()
-                        pixel_acc, _, iou, _, _ = metric_calc(target_for_metric, outputs)
-                        total_iou += iou * inputs.size(0)
+                        # target을 0.5 기준으로 hard-label로 변환
+                        target_for_metric = (labels.squeeze(1) > 0.5).long()
+                        
+                        # BinaryMetrics는 1채널 예측을 기대하므로 첫 채널만 전달
+                        # 반환값: [pixel_acc, dice, precision, specificity, recall]
+                        metrics_list = metric_calc(target_for_metric, outputs[:, 0:1])
+                        pixel_acc = metrics_list[0]
+                        dice = metrics_list[1]
+                        
+                        total_dice += dice * inputs.size(0)
                         total_pixel_acc += pixel_acc * inputs.size(0)
 
                     # backward + optimize only if in training phase
@@ -184,7 +206,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                     f"{phase}/loss": epoch_loss,
                     f"{phase}/ce": metrics['ce'] / epoch_samples,
                     f"{phase}/dice": metrics['dice'] / epoch_samples,
-                    f"{phase}/mIoU": total_iou / epoch_samples,
+                    f"{phase}/dice_score": total_dice / epoch_samples,
                     f"{phase}/pixel_acc": total_pixel_acc / epoch_samples,
                 }, step=epoch)
 
@@ -271,40 +293,54 @@ def main():
         torchvision.datasets.OxfordIIITPet(root=pets_path_train, split="trainval", target_types="segmentation", download=True)
         torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
 
-        transform_dict = args_to_dict(
-            pre_transform=T.ToTensor(),
-            pre_target_transform=T.ToTensor(),
-            common_transform=T.Compose([T.RandomHorizontalFlip(p=0.5)]),
-            post_transform=T.Compose([
-                T.Resize((256, 256), interpolation=T.InterpolationMode.BILINEAR),
-                T.ColorJitter(contrast=0.3),
-            ]),
-            post_target_transform=T.Compose([
-                T.Resize((256, 256), interpolation=T.InterpolationMode.NEAREST),
-                T.Lambda(tensor_trimap),
-            ]))
+        # Define Albumentations pipelines
+        IMG_SIZE = 256
+        # Note: Albumentations' Normalize uses ImageNet stats by default
+        train_transform = A.Compose([
+            A.LongestMaxSize(max_size=IMG_SIZE),
+            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=2), # Pad with background value
+            A.RandomHorizontalFlip(p=0.5),
+            A.ColorJitter(p=0.5, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+            A.Normalize(),
+            ToTensorV2(),
+        ])
+    
+        val_transform = A.Compose([
+            A.LongestMaxSize(max_size=IMG_SIZE),
+            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=2),
+            A.Normalize(),
+            ToTensorV2(),
+        ])
 
-        # 1. 모든 데이터를 로드하여 하나로 합칩니다 (Pooling)
-        ds_trainval = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", target_types="segmentation", download=False, **transform_dict)
-        ds_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", target_types="segmentation", download=False, **transform_dict)
-        all_data = ConcatDataset([ds_trainval, ds_test])
+        # Create full datasets with different transforms
+        full_train_dataset = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", transform=train_transform)
+        # The validation set should not have random augmentations, so we create a separate dataset instance for it
+        full_val_dataset = OxfordIIITPetsAugmented(root=pets_path_train, split="trainval", transform=val_transform)
+        pets_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", transform=val_transform)
 
-        # 2. 모든 길이를 전체 데이터(total_len) 기준으로 계산하여 70:10:20 비율을 맞춥니다.
-        total_len = len(all_data)
-        test_len = int(0.2 * total_len)
-        val_len = int(0.1 * total_len)
-        train_len = total_len - (test_len + val_len)
-        pets_train, pets_val, pets_test = random_split(all_data, [train_len, val_len, test_len], generator=torch.Generator().manual_seed(42))
+        # Split the original training data into a new training set and a validation set (e.g., 90% train, 10% val)
+        train_len = int(len(full_train_dataset) * 0.9)
+        val_len = len(full_train_dataset) - train_len
+        
+        # Use a generator for reproducibility
+        generator = torch.Generator().manual_seed(args.seed)
+        # Important: Split the indices, then create Subsets with the correct transforms
+        indices = torch.randperm(len(full_train_dataset), generator=generator).tolist()
+        
+        pets_train = torch.utils.data.Subset(full_train_dataset, indices[:train_len])
+        pets_val_subset = torch.utils.data.Subset(full_val_dataset, indices[train_len:])
+        
+        # The original code concatenated the test set into the validation logic. We'll honor that.
+        pets_val = ConcatDataset([pets_val_subset, pets_test])
 
         # 전체 데이터셋 요약 정보 출력
-        total_samples = len(pets_train) + len(pets_val) + len(pets_test)
+        total_samples = len(pets_train) + len(pets_val)
         print("\n" + "="*40)
         print(f"{'Dataset Split Information':^40}")
         print("-" * 40)
         print(f" Train samples: {len(pets_train):>5} ({len(pets_train)/total_samples*100:>5.1f}%)")
         print(f" Val samples:   {len(pets_val):>5} ({len(pets_val)/total_samples*100:>5.1f}%)")
-        print(f" Test samples:  {len(pets_test):>5} ({len(pets_test)/total_samples*100:>5.1f}%)")
-        print(f" Total:         {total_samples:>5} (100.0%)")
+        print(f" Total Used:    {total_samples:>5} (100.0%)")
         print("="*40 + "\n")
 
         dataloaders = {
