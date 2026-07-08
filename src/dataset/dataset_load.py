@@ -48,11 +48,20 @@ class TrimapClass(IntEnum):
 #BCEWithLogitsLoss는 시그모이드 활성화 함수와 이진 교차 엔트로피 손실을 결합한 손실 함수 이 함수는 정답이 float형을 필요로 함
 # tripmap를 통해서 mask를 0 0.5 1로 바꿔주는 함수 0 = 클래스1이 절대 아님 1 = 클래스1이 확실히 맞음 0.5 = 클래스1인지 클래스0인지 확실하지 않음
 def trimap2f(trimap):
-    # Convert PIL Image to tensor to get original integer values {1, 2, 3}
-    t = (img2t(trimap) * 255.0).long()
+    # Handle both Tensors (from Albumentations) and PIL/NumPy arrays
+    if isinstance(trimap, torch.Tensor):
+        # If it's a tensor, assume it has integer values {1, 2, 3}
+        t = trimap.long()
+    else:
+        # If it's PIL/NumPy, convert to tensor and scale back to integer values
+        t = (img2t(trimap) * 255.0).long()
+
+    # Ensure t is 3D (C, H, W) for consistency, even if C=1
+    if t.dim() == 2:
+        t = t.unsqueeze(0)
     
     # Create a new float tensor for the target soft labels
-    target = torch.full_like(t, 0.0, dtype=torch.float32)
+    target = torch.full_like(t, 0.0, dtype=torch.float32, device=t.device)
     
     # Apply the mapping based on the comments' intention
     # Pet (value 1) becomes 1.0
