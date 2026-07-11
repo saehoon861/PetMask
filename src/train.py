@@ -61,7 +61,7 @@ def dice_loss(pred, target, smooth=1.):
     dice = (2. * intersection + smooth) / (union + smooth)
     return 1 - dice.mean()
 
-def calc_loss(pred, target, metrics, bce_weight=0.5):
+def calc_loss(pred, target, metrics, bce_weight):
     # The model outputs 3 channels, but for this binary problem,
     # we assume the first channel corresponds to the 'pet' class.
     pred_pet = pred[:, 0]
@@ -119,7 +119,7 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
 
 
 
-def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_epochs=25, patience=5, use_mock=False):
+def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_epochs=25, patience=5, use_mock=False, args=None):
     # wandb initialization
     if not use_mock:
         wandb.init(
@@ -170,7 +170,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
-                    loss = calc_loss(outputs, labels, metrics)
+                    loss = calc_loss(outputs, labels, metrics, bce_weight= args.ce_weight)
 
                     # 성능 메트릭 계산 (IoU, Acc)
                     with torch.no_grad():
@@ -264,6 +264,7 @@ def get_args():
     parser.add_argument("--use_mock", action="store_true", help="Use mock data for quick testing")
     parser.add_argument("--ce_weight", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay for optimizer")
     return parser.parse_args()
 
 def main():
@@ -356,7 +357,7 @@ def main():
         for param in l.parameters():
             param.requires_grad = False
 
-    optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+    optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.weight_decay)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=20, gamma=0.5)
 
     train_model(
@@ -367,7 +368,8 @@ def main():
         checkpoint_path=args.checkpoint,
         num_epochs=num_epochs, 
         patience=patience,
-        use_mock=args.use_mock
+        use_mock=args.use_mock,
+        args=args
     )
 
 if __name__ == "__main__":
