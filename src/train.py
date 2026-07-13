@@ -98,7 +98,8 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
     num_images = min(inputs.size(0), 4)
     images_list = []
     
-    preds = torch.argmax(outputs, dim=1) # (N, H, W)
+    probs = torch.sigmoid(outputs[:, 0])
+    preds = (probs >= 0.5).long()
     
     for i in range(num_images):
         img = inputs[i].cpu().permute(1, 2, 0).numpy()
@@ -109,8 +110,8 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
         pred = preds[i].cpu().numpy()
         
         images_list.append(wandb.Image(img, caption=f"Original_{i}"))
-        images_list.append(wandb.Image(gt / 2.0, caption=f"GT_{i}")) # 0,1,2 scale for better visibility
-        images_list.append(wandb.Image(pred / 2.0, caption=f"Pred_{i}"))
+        images_list.append(wandb.Image(gt, caption=f"GT_{i}")) # 0,1,2 scale for better visibility
+        images_list.append(wandb.Image(pred, caption=f"Pred_{i}"))
 
     wandb.log({
         "Visuals/Predictions": images_list
@@ -142,6 +143,39 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
+
+        # At epoch 5, unfreeze the backbone and create a new optimizer for fine-tuning
+        if epoch == 5:
+            print("\n" + "="*40)
+            print("Epoch 5: Unfreezing backbone and switching to AdamW for fine-tuning.")
+            print("="*40 + "\n")
+            
+            for layer in model.base_layers:
+                for param in layer.parameters():
+                    param.requires_grad = True
+
+            # Create a new optimizer for fine-tuning that includes all parameters
+            optimizer = optim.AdamW(
+                model.parameters(),
+                lr=1e-5,  # Use a smaller learning rate
+                weight_decay=args.weight_decay
+            )
+            
+            # Create a new scheduler for the new optimizer
+            scheduler = lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=0.5,
+                patience=2,
+                min_lr=1e-6
+            )
+
+            # Log the new learning rate to wandb
+            if not use_mock:
+                wandb.config.update({"fine_tune_lr": 1e-5}, allow_val_change=True)
+
+            # Reset early stopping counter to give fine-tuning a fair chance
+            stop_count = 0
 
         since = time.time()
         # Each epoch has a training and validation phase
@@ -204,14 +238,14 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
             if not use_mock:
                 wandb.log({
                     f"{phase}/loss": epoch_loss,
-                    f"{phase}/ce": metrics['ce'] / epoch_samples,
+                    f"{phase}/bce": metrics['bce'] / epoch_samples,
                     f"{phase}/dice": metrics['dice'] / epoch_samples,
                     f"{phase}/dice_score": total_dice / epoch_samples,
                     f"{phase}/pixel_acc": total_pixel_acc / epoch_samples,
                 }, step=epoch)
 
             if phase == 'train':
-              scheduler.step()
+              # scheduler.step() is now called after the validation phase.
 
               # model.parameters()는 모델의 학습 가능한 파라미터(weight, bias 등)를 optimizer에 전달한다.
               # optimizer는 전달받은 파라미터만 loss.backward()로 계산된 gradient를 이용해 업데이트한다.
@@ -226,6 +260,9 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                       wandb.log({"learning_rate": lr}, step=epoch)
 
             if phase == 'val':
+                # Update scheduler based on validation loss
+                scheduler.step(epoch_loss)
+                
                 # save the model weights if validation loss improved
                 if epoch_loss < best_loss:
                     print(f"saving best model to {checkpoint_path}")
@@ -274,10 +311,11 @@ def main():
     set_seed(args.seed)
 
     if args.use_mock:
-        num_class = 3
+        num_class = 1 # Binary segmentation (pet vs. background)
         mock_n, mock_h, mock_w = 8, 128, 128
         mock_inputs = torch.randn(mock_n, 3, mock_h, mock_w)
-        mock_targets = torch.randint(low=0, high=num_class, size=(mock_n, 1, mock_h, mock_w))
+        # Generate binary mock targets (0 or 1)
+        mock_targets = torch.randint(low=0, high=2, size=(mock_n, 1, mock_h, mock_w))
         mock_dataset = TensorDataset(mock_inputs, mock_targets)
         dataloaders = {
             "train": DataLoader(mock_dataset, batch_size=2, shuffle=True),
@@ -285,7 +323,7 @@ def main():
         }
         num_epochs, patience = 1, 1
     else:
-        num_class = 3
+        num_class = 1 # Binary segmentation (pet vs. background)
         working_dir = args.data_dir
         pets_path_train = os.path.join(working_dir, 'OxfordPets', 'train')
         pets_path_test = os.path.join(working_dir, 'OxfordPets', 'test')
@@ -329,24 +367,25 @@ def main():
         indices = torch.randperm(len(full_train_dataset), generator=generator).tolist()
         
         pets_train = torch.utils.data.Subset(full_train_dataset, indices[:train_len])
-        pets_val_subset = torch.utils.data.Subset(full_val_dataset, indices[train_len:])
+        pets_val = torch.utils.data.Subset(full_val_dataset, indices[train_len:])
         
-        # The original code concatenated the test set into the validation logic. We'll honor that.
-        pets_val = ConcatDataset([pets_val_subset, pets_test])
+        # The test set is now correctly separated from the validation set.
 
         # 전체 데이터셋 요약 정보 출력
-        total_samples = len(pets_train) + len(pets_val)
+        total_samples = len(pets_train) + len(pets_val) + len(pets_test)
         print("\n" + "="*40)
         print(f"{'Dataset Split Information':^40}")
         print("-" * 40)
-        print(f" Train samples: {len(pets_train):>5} ({len(pets_train)/total_samples*100:>5.1f}%)")
-        print(f" Val samples:   {len(pets_val):>5} ({len(pets_val)/total_samples*100:>5.1f}%)")
-        print(f" Total Used:    {total_samples:>5} (100.0%)")
+        print(f" Train samples: {len(pets_train):>5} ({(len(pets_train)/total_samples*100):5.1f}%)")
+        print(f" Val samples:   {len(pets_val):>5} ({(len(pets_val)/total_samples*100):5.1f}%)")
+        print(f" Test samples:  {len(pets_test):>5} ({(len(pets_test)/total_samples*100):5.1f}%)")
+        print(f" Total samples: {total_samples:>5} (100.0%)")
         print("="*40 + "\n")
 
         dataloaders = {
             "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
-            "val": DataLoader(pets_val, batch_size=args.batch_size, shuffle=False)
+            "val": DataLoader(pets_val, batch_size=args.batch_size, shuffle=False),
+            "test": DataLoader(pets_test, batch_size=args.batch_size, shuffle=False),
         }
         num_epochs, patience = args.epochs, args.patience
 
@@ -357,8 +396,14 @@ def main():
         for param in l.parameters():
             param.requires_grad = False
 
-    optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.weight_decay)
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=20, gamma=0.5)
+    optimizer_ft = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.weight_decay)
+    exp_lr_scheduler = lr_scheduler.ReduceLROnPlateau(
+        optimizer_ft,
+        mode="min",
+        factor=0.5,
+        patience=2,
+        min_lr=1e-6
+    )
 
     train_model(
         model, 
