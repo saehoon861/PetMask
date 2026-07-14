@@ -338,7 +338,7 @@ def main():
         # Note: Albumentations' Normalize uses ImageNet stats by default
         train_transform = A.Compose([
             A.LongestMaxSize(max_size=IMG_SIZE),
-            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=2), # Pad with background value
+            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=0), # Pad with background value
             A.HorizontalFlip(p=0.5),
             A.ColorJitter(p=0.5, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
             A.Normalize(),
@@ -390,28 +390,28 @@ def main():
         }
 
         # Debugging: Inspect a batch to check mask values
-        print("\n" + "="*40)
-        print(f"{'Data Sanity Check':^40}")
-        print("-" * 40)
-        print("Grabbing one batch from train dataloader to check mask values...")
-        try:
-            inputs, labels = next(iter(dataloaders["train"]))
-            print(f"Labels batch shape: {labels.shape}")
-            print(f"Unique values in labels: {torch.unique(labels)}")
-            print(f"Value at corner (should be padding): {labels[0, 0, 0, 0]}")
+        # print("\n" + "="*40)
+        # print(f"{'Data Sanity Check':^40}")
+        # print("-" * 40)
+        # print("Grabbing one batch from train dataloader to check mask values...")
+        # try:
+        #     inputs, labels = next(iter(dataloaders["train"]))
+        #     print(f"Labels batch shape: {labels.shape}")
+        #     print(f"Unique values in labels: {torch.unique(labels)}")
+        #     print(f"Value at corner (should be padding): {labels[0, 0, 0, 0]}")
             
-            if torch.unique(labels).max() > 1.0:
-                print("\n[Warning] Found mask values greater than 1.0. The padding 'mask_value=2' is likely incorrect and should be 0.")
-            elif labels[0, 0, 0, 0] != 0.0:
-                 print(f"\n[Warning] Padding value is '{labels[0, 0, 0, 0]}', but expected 0.0 for background. 'mask_value=2' might be incorrect.")
-            else:
-                print("\n[Info] Mask values appear to be in the [0, 1] range and padding seems correct (0.0).")
+        #     if torch.unique(labels).max() > 1.0:
+        #         print("\n[Warning] Found mask values greater than 1.0. The padding 'mask_value=2' is likely incorrect and should be 0.")
+        #     elif labels[0, 0, 0, 0] != 0.0:
+        #          print(f"\n[Warning] Padding value is '{labels[0, 0, 0, 0]}', but expected 0.0 for background. 'mask_value=2' might be incorrect.")
+        #     else:
+        #         print("\n[Info] Mask values appear to be in the [0, 1] range and padding seems correct (0.0).")
 
-        except Exception as e:
-            print(f"Could not inspect batch: {e}")
-        print("="*40 + "\n")
-        print("Stopping execution after data check.")
-        return
+        # except Exception as e:
+        #     print(f"Could not inspect batch: {e}")
+        # print("="*40 + "\n")
+        # print("Stopping execution after data check.")
+        # return
 
         num_epochs, patience = args.epochs, args.patience
 
