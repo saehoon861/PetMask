@@ -407,6 +407,11 @@ def main():
         print(f" Total samples: {total_samples:>5} (100.0%)")
         print("="*40 + "\n")
 
+        dataloaders = {
+            "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
+            "val": DataLoader(pets_val, batch_size=args.batch_size, shuffle=False),
+            "test": DataLoader(pets_test, batch_size=args.batch_size, shuffle=False),
+        }
         num_epochs, patience = args.epochs, args.patience
 
     model = ResNetUNet(num_class).to(device)
