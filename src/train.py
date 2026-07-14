@@ -157,7 +157,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
             # Create a new optimizer for fine-tuning that includes all parameters
             optimizer = optim.AdamW(
                 model.parameters(),
-                lr=1e-5,  # Use a smaller learning rate
+                lr= args.fine_tune_lr,  # Use a smaller learning rate
                 weight_decay=args.weight_decay
             )
             
@@ -172,7 +172,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
             # Log the new learning rate to wandb
             if not use_mock:
-                wandb.config.update({"fine_tune_lr": 1e-5}, allow_val_change=True)
+                wandb.config.update({"fine_tune_lr": args.fine_tune_lr}, allow_val_change=True)
 
             # Reset early stopping counter to give fine-tuning a fair chance
             stop_count = 0
@@ -296,6 +296,7 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=64, help="Input batch size")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--fine_tune_lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
     parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Checkpoint file name")
     parser.add_argument("--use_mock", action="store_true", help="Use mock data for quick testing")
@@ -387,6 +388,31 @@ def main():
             "val": DataLoader(pets_val, batch_size=args.batch_size, shuffle=False),
             "test": DataLoader(pets_test, batch_size=args.batch_size, shuffle=False),
         }
+
+        # Debugging: Inspect a batch to check mask values
+        print("\n" + "="*40)
+        print(f"{'Data Sanity Check':^40}")
+        print("-" * 40)
+        print("Grabbing one batch from train dataloader to check mask values...")
+        try:
+            inputs, labels = next(iter(dataloaders["train"]))
+            print(f"Labels batch shape: {labels.shape}")
+            print(f"Unique values in labels: {torch.unique(labels)}")
+            print(f"Value at corner (should be padding): {labels[0, 0, 0, 0]}")
+            
+            if torch.unique(labels).max() > 1.0:
+                print("\n[Warning] Found mask values greater than 1.0. The padding 'mask_value=2' is likely incorrect and should be 0.")
+            elif labels[0, 0, 0, 0] != 0.0:
+                 print(f"\n[Warning] Padding value is '{labels[0, 0, 0, 0]}', but expected 0.0 for background. 'mask_value=2' might be incorrect.")
+            else:
+                print("\n[Info] Mask values appear to be in the [0, 1] range and padding seems correct (0.0).")
+
+        except Exception as e:
+            print(f"Could not inspect batch: {e}")
+        print("="*40 + "\n")
+        print("Stopping execution after data check.")
+        return
+
         num_epochs, patience = args.epochs, args.patience
 
     model = ResNetUNet(num_class).to(device)
