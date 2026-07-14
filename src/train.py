@@ -96,25 +96,49 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
     """
     # 한 배치에서 최대 4개까지만 시각화
     num_images = min(inputs.size(0), 4)
-    images_list = []
     
     probs = torch.sigmoid(outputs[:, 0])
-    preds = (probs >= 0.5).long()
+    preds = (probs >= 0.5).long() # Prediction is already 0 or 1
     
+    class_labels = {
+        0: "background",
+        1: "border", # Assuming 0.5 maps to border
+        2: "pet"     # Assuming 1.0 maps to pet
+    }
+
+    images_to_log = []
+
     for i in range(num_images):
-        img = inputs[i].cpu().permute(1, 2, 0).numpy()
+        img_np = inputs[i].cpu().permute(1, 2, 0).numpy()
         # Denormalize if necessary (assuming ToTensor() [0, 1] range)
-        img = (img - img.min()) / (img.max() - img.min() + 1e-5)
+        img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min() + 1e-5)
         
-        gt = labels[i].squeeze().cpu().numpy()
-        pred = preds[i].cpu().numpy()
+        gt_float = labels[i].squeeze().cpu().numpy()
         
-        images_list.append(wandb.Image(img, caption=f"Original_{i}"))
-        images_list.append(wandb.Image(gt, caption=f"GT_{i}")) # 0,1,2 scale for better visibility
-        images_list.append(wandb.Image(pred, caption=f"Pred_{i}"))
+        # Convert float labels (0.0, 0.5, 1.0) to integer class labels (0, 1, 2)
+        gt_int = np.zeros_like(gt_float, dtype=np.uint8)
+        gt_int[gt_float == 0.5] = 1 # Border
+        gt_int[gt_float == 1.0] = 2 # Pet
+        # Background (0.0) remains 0
+
+        # Create image with ground truth mask
+        images_to_log.append(wandb.Image(
+            img_np,
+            masks={
+                "ground_truth": {
+                    "mask_data": gt_int,
+                    "class_labels": class_labels
+                },
+                 "prediction": {
+                    "mask_data": preds[i].cpu().numpy(),
+                    "class_labels": {0: "background", 1: "pet"} # Prediction is binary
+                }
+            },
+            caption=f"Sample {i} - GT and Prediction"
+        ))
 
     wandb.log({
-        "Visuals/Predictions": images_list
+        "Visuals/Predictions": images_to_log
     }, step=epoch)
 
 
@@ -296,7 +320,7 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=64, help="Input batch size")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument("--fine_tune_lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--fine_tune_lr", type=float, default=1e-5, help="Learning rate for fine-tuning after backbone unfreeze")
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
     parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Checkpoint file name")
     parser.add_argument("--use_mock", action="store_true", help="Use mock data for quick testing")
@@ -347,7 +371,7 @@ def main():
     
         val_transform = A.Compose([
             A.LongestMaxSize(max_size=IMG_SIZE),
-            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=2),
+            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=0),
             A.Normalize(),
             ToTensorV2(),
         ])
@@ -382,36 +406,6 @@ def main():
         print(f" Test samples:  {len(pets_test):>5} ({(len(pets_test)/total_samples*100):5.1f}%)")
         print(f" Total samples: {total_samples:>5} (100.0%)")
         print("="*40 + "\n")
-
-        dataloaders = {
-            "train": DataLoader(pets_train, batch_size=args.batch_size, shuffle=True),
-            "val": DataLoader(pets_val, batch_size=args.batch_size, shuffle=False),
-            "test": DataLoader(pets_test, batch_size=args.batch_size, shuffle=False),
-        }
-
-        # Debugging: Inspect a batch to check mask values
-        # print("\n" + "="*40)
-        # print(f"{'Data Sanity Check':^40}")
-        # print("-" * 40)
-        # print("Grabbing one batch from train dataloader to check mask values...")
-        # try:
-        #     inputs, labels = next(iter(dataloaders["train"]))
-        #     print(f"Labels batch shape: {labels.shape}")
-        #     print(f"Unique values in labels: {torch.unique(labels)}")
-        #     print(f"Value at corner (should be padding): {labels[0, 0, 0, 0]}")
-            
-        #     if torch.unique(labels).max() > 1.0:
-        #         print("\n[Warning] Found mask values greater than 1.0. The padding 'mask_value=2' is likely incorrect and should be 0.")
-        #     elif labels[0, 0, 0, 0] != 0.0:
-        #          print(f"\n[Warning] Padding value is '{labels[0, 0, 0, 0]}', but expected 0.0 for background. 'mask_value=2' might be incorrect.")
-        #     else:
-        #         print("\n[Info] Mask values appear to be in the [0, 1] range and padding seems correct (0.0).")
-
-        # except Exception as e:
-        #     print(f"Could not inspect batch: {e}")
-        # print("="*40 + "\n")
-        # print("Stopping execution after data check.")
-        # return
 
         num_epochs, patience = args.epochs, args.patience
 
