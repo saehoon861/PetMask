@@ -154,6 +154,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                 "epochs": num_epochs,
                 "batch_size": dataloaders['train'].batch_size,
                 "patience": patience,
+                "min_delta": args.min_delta,
                 "model": "ResNet18UNet"
             }
         )
@@ -292,7 +293,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                 scheduler.step(epoch_loss)
                 
                 # save the model weights if validation loss improved
-                if epoch_loss < best_loss:
+                if best_loss - epoch_loss > args.min_delta:
                     print(f"saving best model to {checkpoint_path}")
                     best_loss = epoch_loss
                     torch.save(model.state_dict(), checkpoint_path)
@@ -326,6 +327,7 @@ def get_args():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--fine_tune_lr", type=float, default=1e-5, help="Learning rate for fine-tuning after backbone unfreeze")
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
+    parser.add_argument("--min_delta", type=float, default=0.0001, help="Minimum change to qualify as an improvement for early stopping")
     parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Checkpoint file name")
     parser.add_argument("--use_mock", action="store_true", help="Use mock data for quick testing")
     parser.add_argument("--ce_weight", type=float, default=0.5)
@@ -366,16 +368,54 @@ def main():
         # Note: Albumentations' Normalize uses ImageNet stats by default
         train_transform = A.Compose([
             A.LongestMaxSize(max_size=IMG_SIZE),
-            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=0), # Pad with background value
+
+            A.PadIfNeeded(
+                min_height=IMG_SIZE,
+                min_width=IMG_SIZE,
+                border_mode=cv2.BORDER_CONSTANT,
+                fill=0,
+                fill_mask=0,
+            ),
+
             A.HorizontalFlip(p=0.5),
-            A.ColorJitter(p=0.5, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+
+            A.Affine(
+                scale=(0.9, 1.1),
+                translate_percent=(-0.05, 0.05),
+                rotate=(-10, 10),
+                shear=(-5, 5),
+                p=0.5,
+            ),
+
+            A.OneOf([
+                A.GaussianBlur(blur_limit=(3, 5)),
+                A.GaussNoise(std_range=(0.01, 0.05)),
+            ], p=0.2),
+
+            A.ColorJitter(
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05,
+                p=0.4,
+            ),
+
+            A.CoarseDropout(
+                num_holes_range=(1, 4),
+                hole_height_range=(0.05, 0.15),
+                hole_width_range=(0.05, 0.15),
+                fill=0,
+                fill_mask=None,
+                p=0.2,
+            ),
+
             A.Normalize(),
             ToTensorV2(),
         ])
     
         val_transform = A.Compose([
             A.LongestMaxSize(max_size=IMG_SIZE),
-            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=0),
+            A.PadIfNeeded(min_height=IMG_SIZE, min_width=IMG_SIZE, border_mode=cv2.BORDER_CONSTANT, fill=0, fill_mask=0),
             A.Normalize(),
             ToTensorV2(),
         ])
@@ -387,7 +427,7 @@ def main():
         pets_test = OxfordIIITPetsAugmented(root=pets_path_test, split="test", transform=val_transform)
 
         # Split the original training data into a new training set and a validation set (e.g., 90% train, 10% val)
-        train_len = int(len(full_train_dataset) * 0.9)
+        train_len = int(len(full_train_dataset) * 0.8)
         val_len = len(full_train_dataset) - train_len
         
         # Use a generator for reproducibility
