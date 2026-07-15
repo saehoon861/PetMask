@@ -169,7 +169,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
         print('-' * 10)
 
         # At epoch 5, unfreeze the backbone and create a new optimizer for fine-tuning
-        if epoch == 5:
+        if epoch == 10:
             print("\n" + "="*40)
             print("Epoch 5: Unfreezing backbone and switching to AdamW for fine-tuning.")
             print("="*40 + "\n")
@@ -179,11 +179,15 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                     param.requires_grad = True
 
             # Create a new optimizer for fine-tuning that includes all parameters
-            optimizer = optim.AdamW(
-                model.parameters(),
-                lr= args.fine_tune_lr,  # Use a smaller learning rate
-                weight_decay=args.weight_decay
-            )
+            # Separate parameters for different learning rates
+            all_model_params = set(model.parameters())
+            base_model_params = set(model.base_model.parameters())
+            decoder_params = list(all_model_params - base_model_params)
+
+            optimizer = optim.AdamW([
+                {'params': base_model_params, 'lr': args.fine_tune_lr},
+                {'params': decoder_params, 'lr': args.lr}
+            ], weight_decay=args.weight_decay)
             
             # Create a new scheduler for the new optimizer
             scheduler = lr_scheduler.ReduceLROnPlateau(
