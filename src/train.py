@@ -149,6 +149,14 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     if not use_mock:
         wandb.init(
             project="PetMask",
+            run_name = (
+                f"bs{args.batch_size}"
+                f"_lr{args.lr}"
+                f"_ftlr{args.fine_tune_lr}"
+                f"_wd{args.weight_decay}"
+                f"_ce{args.ce_weight}"
+                f"_min_delta{args.min_delta}"
+                ),
             config={
                 "learning_rate": optimizer.param_groups[0]['lr'],
                 "epochs": num_epochs,
