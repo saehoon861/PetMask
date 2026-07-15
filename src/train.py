@@ -190,12 +190,13 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
             # Create a new optimizer for fine-tuning that includes all parameters
             # Separate parameters for different learning rates
         
-            all_model_params = list(model.parameters())
-            base_model_params = list(model.base_model.parameters())
-            decoder_params = [p for p in all_model_params if p not in base_model_params]
+            # Use parameter IDs to reliably separate base model and decoder parameters
+            # This prevents parameters from being assigned to multiple optimizer groups.
+            base_model_param_ids = set(id(p) for p in model.base_model.parameters())
+            decoder_params = [p for p in model.parameters() if id(p) not in base_model_param_ids]
 
             optimizer = optim.AdamW([
-                {'params': base_model_params, 'lr': args.fine_tune_lr},
+                {'params': model.base_model.parameters(), 'lr': args.fine_tune_lr},
                 {'params': decoder_params, 'lr': args.lr}
             ], weight_decay=args.weight_decay)
             
