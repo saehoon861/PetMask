@@ -149,7 +149,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     if not use_mock:
         wandb.init(
             project="PetMask",
-            run_name = (
+            name = (
                 f"bs{args.batch_size}"
                 f"_lr{args.lr}"
                 f"_ftlr{args.fine_tune_lr}"
