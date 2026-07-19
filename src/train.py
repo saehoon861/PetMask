@@ -92,53 +92,46 @@ def print_metrics(metrics, epoch_samples, phase):
     
 def log_images_to_wandb(inputs, labels, outputs, epoch):
     """
-    WandB에 예측 결과 이미지를 업로드하는 함수
+    WandB에 원본, 정답, 예측 이미지를 각각 분리하여 업로드하는 함수
     """
     # 한 배치에서 최대 4개까지만 시각화
     num_images = min(inputs.size(0), 4)
     
     probs = torch.sigmoid(outputs[:, 0])
-    preds = (probs >= 0.6).long() # Prediction is already 0 or 1
+    # Note: Using a fixed threshold for visualization. The optimal threshold is found later.
+    preds = (probs >= 0.5).long() 
     
-    class_labels = {
-        0: "background",
-        1: "border", # Assuming 0.5 maps to border
-        2: "pet"     # Assuming 1.0 maps to pet
-    }
+    # 클래스 라벨 정의
+    gt_class_labels = {0: "background", 1: "border", 2: "pet"}
+    pred_class_labels = {0: "background", 1: "pet"}
 
-    images_to_log = []
+    original_images, gt_images, pred_images = [], [], []
 
     for i in range(num_images):
+        # 원본 이미지 준비
         img_np = inputs[i].cpu().permute(1, 2, 0).numpy()
-        # Denormalize if necessary (assuming ToTensor() [0, 1] range)
         img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min() + 1e-5)
         
+        # 정답 마스크 준비
         gt_float = labels[i].squeeze().cpu().numpy()
-        
-        # Convert float labels (0.0, 0.5, 1.0) to integer class labels (0, 1, 2)
         gt_int = np.zeros_like(gt_float, dtype=np.uint8)
         gt_int[gt_float == 0.5] = 1 # Border
         gt_int[gt_float == 1.0] = 2 # Pet
-        # Background (0.0) remains 0
 
-        # Create image with ground truth mask
-        images_to_log.append(wandb.Image(
-            img_np,
-            masks={
-                "ground_truth": {
-                    "mask_data": gt_int,
-                    "class_labels": class_labels
-                },
-                 "prediction": {
-                    "mask_data": preds[i].cpu().numpy(),
-                    "class_labels": {0: "background", 1: "pet"} # Prediction is binary
-                }
-            },
-            caption=f"Sample {i} - GT and Prediction"
-        ))
+        # 예측 마스크 준비
+        pred_mask_np = preds[i].cpu().numpy()
 
+        # WandB 이미지 객체 생성 및 리스트에 추가
+        caption = f"Sample {i}"
+        original_images.append(wandb.Image(img_np, caption=caption))
+        gt_images.append(wandb.Image(img_np, masks={"ground_truth": {"mask_data": gt_int, "class_labels": gt_class_labels}}, caption=caption))
+        pred_images.append(wandb.Image(img_np, masks={"prediction": {"mask_data": pred_mask_np, "class_labels": pred_class_labels}}, caption=caption))
+
+    # WandB에 분리하여 로깅
     wandb.log({
-        "Visuals/Predictions": images_to_log
+        "Visuals/Original_Images": original_images,
+        "Visuals/Ground_Truth_Masks": gt_images,
+        "Visuals/Prediction_Masks": pred_images,
     }, step=epoch)
 
 
