@@ -92,7 +92,7 @@ def print_metrics(metrics, epoch_samples, phase):
     
 def log_images_to_wandb(inputs, labels, outputs, epoch):
     """
-    WandB에 원본, 정답, 예측 이미지를 각각 분리하여 업로드하는 함수
+    WandB에 원본, 정답, 예측, 히트맵 이미지를 각각 분리하여 업로드하는 함수
     """
     # 한 배치에서 최대 4개까지만 시각화
     num_images = min(inputs.size(0), 4)
@@ -105,7 +105,7 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
     gt_class_labels = {0: "background", 1: "border", 2: "pet"}
     pred_class_labels = {0: "background", 1: "pet"}
 
-    original_images, gt_images, pred_images = [], [], []
+    original_images, gt_images, pred_images, heatmap_images = [], [], [], []
 
     for i in range(num_images):
         # 원본 이미지 준비
@@ -121,17 +121,22 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
         # 예측 마스크 준비
         pred_mask_np = preds[i].cpu().numpy()
 
+        # 확률 히트맵 준비
+        prob_map_np = probs[i].cpu().numpy()
+
         # WandB 이미지 객체 생성 및 리스트에 추가
         caption = f"Sample {i}"
         original_images.append(wandb.Image(img_np, caption=caption))
         gt_images.append(wandb.Image(img_np, masks={"ground_truth": {"mask_data": gt_int, "class_labels": gt_class_labels}}, caption=caption))
         pred_images.append(wandb.Image(img_np, masks={"prediction": {"mask_data": pred_mask_np, "class_labels": pred_class_labels}}, caption=caption))
+        heatmap_images.append(wandb.Image(prob_map_np, caption=f"{caption} Heatmap"))
 
     # WandB에 분리하여 로깅
     wandb.log({
         "Visuals/Original_Images": original_images,
         "Visuals/Ground_Truth_Masks": gt_images,
         "Visuals/Prediction_Masks": pred_images,
+        "Visuals/Probability_Heatmaps": heatmap_images,
     }, step=epoch)
 
 
