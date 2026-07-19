@@ -98,7 +98,7 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
     num_images = min(inputs.size(0), 4)
     
     probs = torch.sigmoid(outputs[:, 0])
-    preds = (probs >= 0.5).long() # Prediction is already 0 or 1
+    preds = (probs >= 0.6).long() # Prediction is already 0 or 1
     
     class_labels = {
         0: "background",
@@ -170,17 +170,18 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     best_loss = 1e10
     stop_count = 0
 
-    # 메트릭 계산기 초기화 (평균 IoU 등 계산용)
-    metric_calc = BinaryMetrics(activation='sigmoid')
+    # 메트릭 계산기 초기화 (soft/hard 방식 모두)
+    soft_metric_calc = BinaryMetrics(activation='sigmoid')
+    hard_metric_calc = BinaryMetrics(activation='0-1')
 
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
 
-        # At epoch 5, unfreeze the backbone and create a new optimizer for fine-tuning
+        # At epoch 10, unfreeze the backbone and create a new optimizer for fine-tuning
         if epoch == 10:
             print("\n" + "="*40)
-            print("Epoch 5: Unfreezing backbone and switching to AdamW for fine-tuning.")
+            print("Epoch 10: Unfreezing backbone and switching to AdamW for fine-tuning.")
             print("="*40 + "\n")
             
             for layer in model.base_layers:
@@ -226,7 +227,10 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
             metrics = defaultdict(float)
             epoch_samples = 0
-            total_dice, total_pixel_acc = 0, 0
+            
+            # Initialize metric accumulators for the epoch
+            total_soft_pixel_acc, total_soft_dice, total_soft_precision, total_soft_recall = 0, 0, 0, 0
+            total_hard_pixel_acc, total_hard_dice, total_hard_precision, total_hard_recall = 0, 0, 0, 0
 
             for inputs, labels in dataloaders[phase]:
                 inputs = inputs.to(device)
@@ -237,27 +241,30 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
                 # forward
                 # track history if only in train
-
-                #torch.set_grad_enabled(조건)은 조건에 따라 PyTorch가
-                #gradient 계산 기록을 할지 말지 정하는 기능
-
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
-                    loss = calc_loss(outputs, labels, metrics, bce_weight= args.ce_weight)
+                    loss = calc_loss(outputs, labels, metrics, bce_weight=args.ce_weight)
 
                     # 성능 메트릭 계산 (IoU, Acc)
                     with torch.no_grad():
                         # target을 0.5 기준으로 hard-label로 변환
                         target_for_metric = (labels.squeeze(1) > 0.5).long()
                         
-                        # BinaryMetrics는 1채널 예측을 기대하므로 첫 채널만 전달
-                        # 반환값: [pixel_acc, dice, precision, specificity, recall]
-                        metrics_list = metric_calc(target_for_metric, outputs[:, 0:1])
-                        pixel_acc = metrics_list[0]
-                        dice = metrics_list[1]
+                        # BinaryMetrics 반환값: [pixel_acc, dice, precision, specificity, recall]
                         
-                        total_dice += dice * inputs.size(0)
-                        total_pixel_acc += pixel_acc * inputs.size(0)
+                        # Soft-threshold metrics (using probabilities)
+                        soft_metrics = soft_metric_calc(target_for_metric, outputs[:, 0:1])
+                        total_soft_pixel_acc += soft_metrics[0] * inputs.size(0)
+                        total_soft_dice += soft_metrics[1] * inputs.size(0)
+                        total_soft_precision += soft_metrics[2] * inputs.size(0)
+                        total_soft_recall += soft_metrics[4] * inputs.size(0)
+
+                        # Hard-threshold metrics (at 0.5)
+                        hard_metrics = hard_metric_calc(target_for_metric, outputs[:, 0:1])
+                        total_hard_pixel_acc += hard_metrics[0] * inputs.size(0)
+                        total_hard_dice += hard_metrics[1] * inputs.size(0)
+                        total_hard_precision += hard_metrics[2] * inputs.size(0)
+                        total_hard_recall += hard_metrics[4] * inputs.size(0)
 
                     # backward + optimize only if in training phase
                     if phase == 'train':
@@ -278,20 +285,21 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                 wandb.log({
                     f"{phase}/loss": epoch_loss,
                     f"{phase}/bce": metrics['bce'] / epoch_samples,
-                    f"{phase}/dice": metrics['dice'] / epoch_samples,
-                    f"{phase}/dice_score": total_dice / epoch_samples,
-                    f"{phase}/pixel_acc": total_pixel_acc / epoch_samples,
+                    f"{phase}/dice_loss": metrics['dice'] / epoch_samples,
+                    # Soft Metrics
+                    f"{phase}/pixel_acc_soft": total_soft_pixel_acc / epoch_samples,
+                    f"{phase}/dice_score_soft": total_soft_dice / epoch_samples,
+                    f"{phase}/precision_soft": total_soft_precision / epoch_samples,
+                    f"{phase}/recall_soft": total_soft_recall / epoch_samples,
+                    # Hard Metrics
+                    f"{phase}/pixel_acc_hard": total_hard_pixel_acc / epoch_samples,
+                    f"{phase}/dice_score_hard": total_hard_dice / epoch_samples,
+                    f"{phase}/precision_hard": total_hard_precision / epoch_samples,
+                    f"{phase}/recall_hard": total_hard_recall / epoch_samples,
                 }, step=epoch)
 
             if phase == 'train':
               # scheduler.step() is now called after the validation phase.
-
-              # model.parameters()는 모델의 학습 가능한 파라미터(weight, bias 등)를 optimizer에 전달한다.
-              # optimizer는 전달받은 파라미터만 loss.backward()로 계산된 gradient를 이용해 업데이트한다.
-              # lr=1e-5는 초기 learning rate를 0.00001로 설정한다는 의미이다.
-              # scheduler가 없으면 이 값이 유지되고, scheduler가 있으면 학습 중 변경될 수 있다.
-            
-
               for param_group in optimizer.param_groups:
                   lr = param_group['lr']
                   print("LR", lr)
@@ -362,7 +370,7 @@ def main():
             "train": DataLoader(mock_dataset, batch_size=2, shuffle=True),
             "val": DataLoader(mock_dataset, batch_size=2, shuffle=False),
         }
-        num_epochs, patience = 1, 1
+        num_epochs, patience = args.epochs, args.patience
     else:
         num_class = 1 # Binary segmentation (pet vs. background)
         working_dir = args.data_dir
