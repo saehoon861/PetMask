@@ -375,7 +375,7 @@ def main():
         torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
 
         # Define Albumentations pipelines
-        IMG_SIZE = 384
+        IMG_SIZE = 256
         # Note: Albumentations' Normalize uses ImageNet stats by default
         train_transform = A.Compose([
             A.LongestMaxSize(max_size=IMG_SIZE),
