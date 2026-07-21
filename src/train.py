@@ -154,6 +154,8 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                 f"_wd{args.weight_decay}"
                 f"_ce{args.ce_weight}"
                 f"_min_delta{args.min_delta}"
+                f"_img{args.img_size}"
+                f"_gas{args.gradient_accumulation_steps}"
                 ),
             config={
                 "learning_rate": optimizer.param_groups[0]['lr'],
@@ -161,7 +163,9 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                 "batch_size": dataloaders['train'].batch_size,
                 "patience": patience,
                 "min_delta": args.min_delta,
-                "model": "ResNet18UNet"
+                "model": "ResNet18UNet",
+                "img_size": args.img_size,
+                "gradient_accumulation_steps": args.gradient_accumulation_steps,
             }
         )
 
@@ -229,19 +233,23 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
             # Initialize metric accumulators for the epoch
             total_soft_pixel_acc, total_soft_dice, total_soft_precision, total_soft_recall = 0, 0, 0, 0
             total_hard_pixel_acc, total_hard_dice, total_hard_precision, total_hard_recall = 0, 0, 0, 0
+            
+            if phase == 'train':
+                optimizer.zero_grad()
 
-            for inputs, labels in dataloaders[phase]:
+            for i, (inputs, labels) in enumerate(dataloaders[phase]):
                 inputs = inputs.to(device)
                 labels = labels.to(device)
-
-                # zero the parameter gradients
-                optimizer.zero_grad()
 
                 # forward
                 # track history if only in train
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
                     loss = calc_loss(outputs, labels, metrics, bce_weight=args.ce_weight)
+
+                    # Normalize loss for gradient accumulation
+                    if phase == 'train':
+                        loss = loss / args.gradient_accumulation_steps
 
                     # 성능 메트릭 계산 (IoU, Acc)
                     with torch.no_grad():
@@ -267,7 +275,9 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                     # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
-                        optimizer.step()
+                        if (i + 1) % args.gradient_accumulation_steps == 0:
+                            optimizer.step()
+                            optimizer.zero_grad()
 
                 # 시각화 로그: 검증 단계의 첫 번째 배치 이미지만 기록
                 if phase == 'val' and epoch_samples == 0 and not use_mock:
@@ -339,6 +349,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="PetMask Training Script")
     parser.add_argument("--data_dir", type=str, default="/home/sehoon/workspace/PetMask/src/dataset", help="Dataset root directory")
     parser.add_argument("--batch_size", type=int, default=64, help="Input batch size")
+    parser.add_argument("--img_size", type=int, default=256, help="Image size for training")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--fine_tune_lr", type=float, default=1e-5, help="Learning rate for fine-tuning after backbone unfreeze")
@@ -349,6 +360,7 @@ def get_args():
     parser.add_argument("--ce_weight", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay for optimizer")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Number of steps to accumulate gradients")
     return parser.parse_args()
 
 def main():
@@ -359,7 +371,7 @@ def main():
 
     if args.use_mock:
         num_class = 1 # Binary segmentation (pet vs. background)
-        mock_n, mock_h, mock_w = 8, 128, 128
+        mock_n, mock_h, mock_w = 8, args.img_size, args.img_size
         mock_inputs = torch.randn(mock_n, 3, mock_h, mock_w)
         # Generate binary mock targets (0 or 1)
         mock_targets = torch.randint(low=0, high=2, size=(mock_n, 1, mock_h, mock_w))
@@ -380,7 +392,7 @@ def main():
         torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
 
         # Define Albumentations pipelines
-        IMG_SIZE = 256
+        IMG_SIZE = args.img_size
         # Note: Albumentations' Normalize uses ImageNet stats by default
         train_transform = A.Compose([
             A.LongestMaxSize(max_size=IMG_SIZE),
