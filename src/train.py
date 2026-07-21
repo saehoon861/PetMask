@@ -7,7 +7,7 @@ from albumentations.pytorch import ToTensorV2
 import cv2
 
 from evalution import BinaryMetrics  # Metrics 계산기 임포트
-from dataset.dataset_load import OxfordIIITPetsAugmented, trimap2f, args_to_dict
+from dataset.dataset_load import OxfordIIITPetsAugmented
 from models.model import ResNetUNet
 import time
 import torchvision
@@ -18,6 +18,7 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import TensorDataset, DataLoader, random_split, ConcatDataset
 import random
+from torchmetrics.average_precision import BinaryAveragePrecision
 import numpy as np
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -172,9 +173,11 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     best_loss = 1e10
     stop_count = 0
 
-    # 메트릭 계산기 초기화 (soft/hard 방식 모두)
+    # 메트릭 계산기 초기화
     soft_metric_calc = BinaryMetrics(activation='sigmoid')
     hard_metric_calc = BinaryMetrics(activation='0-1')
+    ap_calculator = BinaryAveragePrecision().to(device)
+
 
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
@@ -272,6 +275,11 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                         total_hard_precision += hard_metrics[2] * inputs.size(0)
                         total_hard_recall += hard_metrics[4] * inputs.size(0)
 
+                        # AP 계산 (validation set에서만)
+                        if phase == 'val':
+                            ap_calculator.update(outputs[:, 0], target_for_metric)
+
+
                     # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
@@ -288,23 +296,32 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
             print_metrics(metrics, epoch_samples, phase)
             epoch_loss = metrics['loss'] / epoch_samples
+            
+            # Epoch-level WandB logging
+            log_payload = {
+                f"{phase}/loss": epoch_loss,
+                f"{phase}/bce": metrics['bce'] / epoch_samples,
+                f"{phase}/dice_loss": metrics['dice'] / epoch_samples,
+                # Soft Metrics
+                f"{phase}/pixel_acc_soft": total_soft_pixel_acc / epoch_samples,
+                f"{phase}/dice_score_soft": total_soft_dice / epoch_samples,
+                f"{phase}/precision_soft": total_soft_precision / epoch_samples,
+                f"{phase}/recall_soft": total_soft_recall / epoch_samples,
+                # Hard Metrics
+                f"{phase}/pixel_acc_hard": total_hard_pixel_acc / epoch_samples,
+                f"{phase}/dice_score_hard": total_hard_dice / epoch_samples,
+                f"{phase}/precision_hard": total_hard_precision / epoch_samples,
+                f"{phase}/recall_hard": total_hard_recall / epoch_samples,
+            }
 
+            if phase == 'val':
+                val_ap = ap_calculator.compute()
+                log_payload[f"val/AP"] = val_ap
+                ap_calculator.reset()
+            
             if not use_mock:
-                wandb.log({
-                    f"{phase}/loss": epoch_loss,
-                    f"{phase}/bce": metrics['bce'] / epoch_samples,
-                    f"{phase}/dice_loss": metrics['dice'] / epoch_samples,
-                    # Soft Metrics
-                    f"{phase}/pixel_acc_soft": total_soft_pixel_acc / epoch_samples,
-                    f"{phase}/dice_score_soft": total_soft_dice / epoch_samples,
-                    f"{phase}/precision_soft": total_soft_precision / epoch_samples,
-                    f"{phase}/recall_soft": total_soft_recall / epoch_samples,
-                    # Hard Metrics
-                    f"{phase}/pixel_acc_hard": total_hard_pixel_acc / epoch_samples,
-                    f"{phase}/dice_score_hard": total_hard_dice / epoch_samples,
-                    f"{phase}/precision_hard": total_hard_precision / epoch_samples,
-                    f"{phase}/recall_hard": total_hard_recall / epoch_samples,
-                }, step=epoch)
+                wandb.log(log_payload, step=epoch)
+
 
             if phase == 'train':
               # scheduler.step() is now called after the validation phase.
@@ -343,6 +360,61 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     # load best model weights
     model.load_state_dict(torch.load(checkpoint_path))
     return model
+
+def dice_score_from_tensors(preds, targets, smooth=1.):
+    """
+    Computes the Dice score for a batch of predictions and targets.
+    preds and targets are expected to be binary (0 or 1).
+    """
+    intersection = (preds * targets).sum()
+    union = preds.sum() + targets.sum()
+    dice = (2. * intersection + smooth) / (union + smooth)
+    return dice.item()
+
+def find_optimal_threshold(model, dataloader):
+    print("\n" + "="*40)
+    print("Finding optimal threshold...")
+    print("="*40 + "\n")
+
+    model.eval()
+    device = next(model.parameters()).device # Get model's device
+    
+    all_preds = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            inputs = inputs.to(device)
+            
+            # Model outputs logits, apply sigmoid to get probabilities
+            outputs = torch.sigmoid(model(inputs)[:, 0]) 
+            
+            # Ground truth labels should be binary for metric calculation
+            # target is already float (0.0, 0.5, 1.0), convert to 0 or 1 for pet mask
+            targets_binary = (labels.squeeze(1) == 1.0).long() 
+
+            all_preds.append(outputs.cpu())
+            all_targets.append(targets_binary.cpu())
+
+    all_preds = torch.cat(all_preds)
+    all_targets = torch.cat(all_targets)
+
+    # Search thresholds from 0.05 to 0.95 with step 0.01
+    thresholds = np.arange(0.05, 0.96, 0.01)
+    best_dice = 0.0
+    best_threshold = 0.0
+
+    for thr in thresholds:
+        pred_masks = (all_preds > thr).long()
+        current_dice = dice_score_from_tensors(pred_masks, all_targets)
+
+        if current_dice > best_dice:
+            best_dice = current_dice
+            best_threshold = thr
+    
+    print(f"Optimal threshold found: {best_threshold:.2f}")
+    print(f"With Dice Score: {best_dice:.4f}")
+    return best_threshold
 
 
 def get_args():
@@ -502,7 +574,7 @@ def main():
         min_lr=1e-6
     )
 
-    train_model(
+    trained_model = train_model(
         model, 
         dataloaders, 
         optimizer_ft, 
@@ -513,6 +585,10 @@ def main():
         use_mock=args.use_mock,
         args=args
     )
+
+    if not args.use_mock:
+        # After training, find the optimal threshold on the validation set
+        find_optimal_threshold(trained_model, dataloaders['val'])
 
 if __name__ == "__main__":
     main()
