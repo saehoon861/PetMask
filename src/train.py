@@ -18,7 +18,7 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import TensorDataset, DataLoader, random_split, ConcatDataset
 import random
-from torchmetrics.average_precision import BinaryAveragePrecision
+from torchmetrics.classification import BinaryAveragePrecision
 import numpy as np
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
