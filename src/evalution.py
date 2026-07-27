@@ -2,107 +2,129 @@ import os
 import argparse
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision
 import random
 import cv2
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import matplotlib.pyplot as plt
 from torchmetrics.classification import (
-    Dice, 
-    BinaryAccuracy, 
-    BinaryPrecision, 
-    BinaryRecall, 
-    BinarySpecificity, 
-    BinaryAveragePrecision
+    Dice,
+    BinaryAccuracy,
+    BinaryPrecision,
+    BinaryRecall,
+    BinarySpecificity,
+    BinaryAveragePrecision,
+    BinaryPrecisionRecallCurve
 )
 
-
 def set_seed(seed=42):
+    """Sets a random seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def dice_score_from_tensors(preds, targets, smooth=1.):
-    """
-    Computes the Dice score for a batch of predictions and targets.
-    preds and targets are expected to be binary (0 or 1).
-    """
-    intersection = (preds * targets).sum()
-    union = preds.sum() + targets.sum()
-    dice = (2. * intersection + smooth) / (union + smooth)
-    return dice.item()
+def plot_pr_curve(precision, recall, ap_score, save_path):
+    """Plots and saves the Precision-Recall curve."""
+    plt.figure(figsize=(8, 6))
+    plt.plot(recall, precision, color='b', lw=2)
+    plt.fill_between(recall, precision, step='post', alpha=0.2, color='b')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.ylim([0.0, 1.05])
+    plt.xlim([0.0, 1.0])
+    plt.title(f'Precision-Recall Curve (AP = {ap_score:.4f})')
+    plt.grid(True)
+    plt.savefig(save_path)
+    plt.close()
+    print(f"PR curve saved to {save_path}")
 
-def find_optimal_threshold(model, dataloader, device):
-    print("\n" + "="*40)
-    print("Finding optimal threshold on test set...")
-    print("="*40 + "\n")
+def plot_score_distribution(scores, save_path):
+    """Plots and saves the distribution of Dice scores."""
+    plt.figure(figsize=(10, 6))
+    plt.hist(scores, bins=30, color='skyblue', edgecolor='black')
+    mean_score = np.mean(scores)
+    plt.axvline(mean_score, color='r', linestyle='--', linewidth=2, label=f'Mean: {mean_score:.4f}')
+    plt.title('Distribution of Dice Scores Across Test Set')
+    plt.xlabel('Dice Score')
+    plt.ylabel('Number of Images')
+    plt.legend()
+    plt.grid(axis='y', alpha=0.75)
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Score distribution plot saved to {save_path}")
 
-    model.eval()
+def save_qualitative_results(sample_data, threshold, save_path):
+    """Saves a 4-panel image comparing original, GT, prediction, and error map."""
+    image, gt_mask, pred_logits, score = sample_data
     
-    all_preds = []
-    all_targets = []
+    # Inverse normalize image for visualization
+    # These are ImageNet stats from A.Normalize()
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    image = image.cpu().numpy().transpose((1, 2, 0))
+    image = std * image + mean
+    image = np.clip(image, 0, 1)
+
+    gt_mask = gt_mask.cpu().numpy().squeeze()
+    pred_mask = (torch.sigmoid(pred_logits) > threshold).cpu().numpy().squeeze()
+
+    # Create error map
+    # TP: green, FP: red, FN: yellow
+    error_map = np.zeros((*gt_mask.shape, 3), dtype=np.uint8)
+    error_map[(pred_mask == 1) & (gt_mask == 1)] = [0, 255, 0]  # Green (TP)
+    error_map[(pred_mask == 1) & (gt_mask == 0)] = [255, 0, 0]  # Red (FP)
+    error_map[(pred_mask == 0) & (gt_mask == 1)] = [255, 255, 0] # Yellow (FN)
+
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    fig.suptitle(f'Dice Score: {score:.4f}', fontsize=16)
+
+    axes[0].imshow(image)
+    axes[0].set_title("Original Image")
+    axes[0].axis('off')
+
+    axes[1].imshow(gt_mask, cmap='gray')
+    axes[1].set_title("Ground Truth Mask")
+    axes[1].axis('off')
+
+    axes[2].imshow(pred_mask, cmap='gray')
+    axes[2].set_title(f"Prediction (Threshold={threshold:.2f})")
+    axes[2].axis('off')
     
-    with torch.no_grad():
-        for inputs, labels in dataloader:
-            inputs = inputs.to(device)
-            
-            # Model outputs logits, apply sigmoid to get probabilities
-            outputs = torch.sigmoid(model(inputs)[:, 0]) 
-            
-            # Ground truth labels should be binary for metric calculation
-            # target is float (0.0, 0.5, 1.0), convert to 0 or 1 for pet mask
-            targets_binary = (labels.squeeze(1) > 0.5).long() 
+    axes[3].imshow(error_map)
+    axes[3].set_title("Error Map (G: TP, R: FP, Y: FN)")
+    axes[3].axis('off')
 
-            all_preds.append(outputs.cpu())
-            all_targets.append(targets_binary.cpu())
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
 
-    all_preds = torch.cat(all_preds)
-    all_targets = torch.cat(all_targets)
-
-    # Search thresholds from 0.05 to 0.95 with step 0.01
-    thresholds = np.arange(0.05, 0.96, 0.01)
-    best_dice = 0.0
-    best_threshold = 0.0
-
-    for thr in thresholds:
-        pred_masks = (all_preds > thr).long()
-        current_dice = dice_score_from_tensors(pred_masks, all_targets)
-
-        if current_dice > best_dice:
-            best_dice = current_dice
-            best_threshold = thr
-    
-    print(f"Optimal threshold found: {best_threshold:.2f}")
-    print(f"With Dice Score at optimal threshold: {best_dice:.4f}")
-    return best_threshold
-
-def run_evaluation(checkpoint_path, data_dir, batch_size, img_size):
-    # 평가 시에도 동일한 데이터 분할을 보장하기 위해 시드 설정
+def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, num_examples):
     set_seed(42)
-
     from dataset.dataset_load import OxfordIIITPetsAugmented
     from models.model import ResNetUNet
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    num_class = 1 # Binary segmentation (pet vs. not-pet)
+    num_class = 1
 
-    # 1. 모델 로드
+    # --- 1. Setup Output Directory ---
+    output_dir = "evaluation_results"
+    qualitative_dir = os.path.join(output_dir, "qualitative_results")
+    os.makedirs(qualitative_dir, exist_ok=True)
+    print(f"Evaluation results will be saved in '{output_dir}/'")
+
+    # --- 2. Load Model & Data ---
     model = ResNetUNet(num_class).to(device)
     if os.path.exists(checkpoint_path):
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-        print(f"Loaded checkpoint from {checkpoint_path}")
     else:
-        print(f"Checkpoint not found at {checkpoint_path}")
-        return
-
+        print(f"Checkpoint not found at {checkpoint_path}"); return
     model.eval()
 
-    # 2. 테스트셋 로드 (train.py의 validation transform과 동일하게 설정)
     val_transform = A.Compose([
         A.LongestMaxSize(max_size=img_size),
         A.PadIfNeeded(min_height=img_size, min_width=img_size, border_mode=cv2.BORDER_CONSTANT, fill=0, fill_mask=0),
@@ -111,69 +133,93 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size):
     ])
     
     pets_path_test = os.path.join(data_dir, 'OxfordPets', 'test')
-    # Ensure data is downloaded if not present
     torchvision.datasets.OxfordIIITPet(root=pets_path_test, split="test", target_types="segmentation", download=True)
     
+    # Use batch_size=1 for per-image analysis
     test_dataset = OxfordIIITPetsAugmented(root=pets_path_test, split="test", transform=val_transform)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     
     print(f"\nEvaluating on {len(test_dataset)} test images...")
 
-    # 3. TorchMetrics 계산기 초기화
-    # AP는 확률(logits)을 직접 사용하므로 별도 관리
-    ap_calculator = BinaryAveragePrecision().to(device)
-    
-    # 나머지 메트릭은 0.5 임계값을 기준으로 계산
-    metrics_at_0_5 = {
-        "Accuracy": BinaryAccuracy().to(device),
-        "Dice": Dice().to(device),
-        "Precision": BinaryPrecision().to(device),
-        "Recall": BinaryRecall().to(device),
-        "Specificity": BinarySpecificity().to(device),
+    # --- 3. Initialize Metric Calculators ---
+    # Global metrics calculated over the entire dataset
+    global_metrics = {
+        "Accuracy": BinaryAccuracy(threshold=threshold).to(device),
+        "Dice": Dice(threshold=threshold).to(device),
+        "Precision": BinaryPrecision(threshold=threshold).to(device),
+        "Recall": BinaryRecall(threshold=threshold).to(device),
+        "Specificity": BinarySpecificity(threshold=threshold).to(device),
+        "AP": BinaryAveragePrecision().to(device),
     }
-
-    # 4. 평가 루프 실행
+    pr_curve_calculator = BinaryPrecisionRecallCurve().to(device)
+    
+    # Per-image Dice calculator
+    per_image_dice = Dice(threshold=threshold).to(device)
+    
+    # --- 4. Evaluation Loop ---
+    all_results = []
     with torch.no_grad():
-        for images, masks in test_loader:
-            images = images.to(device)
-            masks = masks.to(device) # Shape: (N, 1, H, W), values are 0.0, 0.5, 1.0
-
-            # Convert mask to binary format (pet=1, other=0)
-            binary_masks = (masks.squeeze(1) > 0.5).int() # Shape: (N, H, W), torchmetrics는 int 타입을 선호
+        for i, (image, mask) in enumerate(test_loader):
+            image, mask = image.to(device), mask.to(device)
+            binary_mask = (mask.squeeze(1) > 0.5).int()
             
-            outputs = model(images) # Shape: (N, 1, H, W), logits
+            logits = model(image)
+            
+            # Update global metrics
+            for metric in global_metrics.values():
+                metric.update(logits.squeeze(1), binary_mask)
+            pr_curve_calculator.update(logits.squeeze(1), binary_mask)
 
-            # 모든 메트릭 계산기에 현재 배치의 예측과 정답을 전달하여 상태 업데이트
-            ap_calculator.update(outputs.squeeze(1), binary_masks)
-            for metric in metrics_at_0_5.values():
-                metric.update(outputs.squeeze(1), binary_masks)
+            # Calculate and store per-image score and data
+            score = per_image_dice(logits, binary_mask).item()
+            all_results.append({
+                "score": score,
+                "image": image.squeeze(0), # Remove batch dim
+                "gt_mask": mask.squeeze(0),
+                "pred_logits": logits.squeeze(0)
+            })
 
-    # 5. 최종 결과 계산 및 출력
-    final_results = {}
-    for name, metric in metrics_at_0_5.items():
-        final_results[name] = metric.compute().item()
+    # --- 5. Compute, Print, and Visualize Results ---
+    # Global Metrics
+    final_scores = {name: metric.compute().item() for name, metric in global_metrics.items()}
     
-    final_results["Average Precision"] = ap_calculator.compute().item()
-
     print("\n--- Test Set Performance (Calculated by TorchMetrics) ---")
-    print(f"Dice Score (Threshold=0.5): {final_results['Dice']:.4f}")
-    print(f"Accuracy (Threshold=0.5):   {final_results['Accuracy']:.4f}")
-    print(f"Precision (Threshold=0.5):  {final_results['Precision']:.4f}")
-    print(f"Recall (Threshold=0.5):     {final_results['Recall']:.4f}")
-    print(f"Specificity (Threshold=0.5):{final_results['Specificity']:.4f}")
-    print(f"Average Precision (AP):     {final_results['Average Precision']:.4f}")
-    
-    # 6. 테스트셋 기준 최적 임계값 탐색 및 결과 보고
-    find_optimal_threshold(model, test_loader, device)
+    print(f"Metrics calculated at threshold: {threshold:.4f}")
+    print("-" * 55)
+    print(f"Dice Score:        {final_scores['Dice']:.4f}")
+    print(f"Accuracy:          {final_scores['Accuracy']:.4f}")
+    print(f"Precision:         {final_scores['Precision']:.4f}")
+    print(f"Recall:            {final_scores['Recall']:.4f}")
+    print(f"Specificity:       {final_scores['Specificity']:.4f}")
+    print(f"Average Precision: {final_scores['AP']:.4f} (Threshold-Independent)")
 
+    # PR Curve
+    precision, recall, _ = pr_curve_calculator.compute()
+    plot_pr_curve(precision.cpu(), recall.cpu(), final_scores['AP'], os.path.join(output_dir, "pr_curve.png"))
+    
+    # Score Distribution
+    dice_scores = [r['score'] for r in all_results]
+    plot_score_distribution(dice_scores, os.path.join(output_dir, "score_distribution.png"))
+
+    # Qualitative Analysis
+    all_results.sort(key=lambda x: x['score'], reverse=True)
+    best_cases = all_results[:num_examples]
+    worst_cases = all_results[-num_examples:]
+
+    print(f"\nSaving {num_examples} best and worst case qualitative examples...")
+    for i in range(num_examples):
+        save_qualitative_results(best_cases[i], threshold, os.path.join(qualitative_dir, f"best_case_{i+1}.png"))
+        # Reverse worst cases for naming consistency (worst_case_1 is the absolute worst)
+        save_qualitative_results(worst_cases[-(i+1)], threshold, os.path.join(qualitative_dir, f"worst_case_{i+1}.png"))
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="PetMask Evaluation Script")
-    parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Path to trained model checkpoint")
-    parser.add_argument("--data_dir", type=str, default="/home/sehoon/workspace/PetMask/src/dataset", help="Dataset root directory")
-    parser.add_argument("--batch_size", type=int, default=32, help="Input batch size for evaluation")
-    parser.add_argument("--img_size", type=int, default=256, help="Image size used during training")
+    parser = argparse.ArgumentParser(description="PetMask Comprehensive Evaluation Script")
+    parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Path to trained model checkpoint.")
+    parser.add_argument("--data_dir", type=str, default="/home/sehoon/workspace/PetMask/src/dataset", help="Dataset root directory.")
+    parser.add_argument("--img_size", type=int, default=256, help="Image size used during training.")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Optimal threshold found on the validation set.")
+    parser.add_argument("--num_examples", type=int, default=5, help="Number of best/worst examples to save.")
     
     args = parser.parse_args()
     
-    run_evaluation(args.checkpoint, args.data_dir, args.batch_size, args.img_size)
+    run_evaluation(args.checkpoint, args.data_dir, 1, args.img_size, args.threshold, args.num_examples)

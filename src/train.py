@@ -588,7 +588,10 @@ def main():
 
     if not args.use_mock:
         # After training, find the optimal threshold on the validation set
-        find_optimal_threshold(trained_model, dataloaders['val'])
+        optimal_thr = find_optimal_threshold(trained_model, dataloaders['val'])
+        print("\n" + "="*40)
+        print(f"Optimal threshold found on validation set: {optimal_thr:.4f}")
+        print("="*40 + "\n")
 
 if __name__ == "__main__":
     main()
