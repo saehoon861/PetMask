@@ -10,7 +10,6 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import matplotlib.pyplot as plt
 from torchmetrics.classification import (
-    DiceScore,
     BinaryAccuracy,
     BinaryPrecision,
     BinaryRecall,
@@ -18,6 +17,7 @@ from torchmetrics.classification import (
     BinaryAveragePrecision,
     BinaryPrecisionRecallCurve
 )
+from torchmetrics.classification import DiceScore
 
 def set_seed(seed=42):
     """Sets a random seed for reproducibility."""
