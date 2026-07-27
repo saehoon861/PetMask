@@ -17,7 +17,7 @@ from torchmetrics.classification import (
     BinaryAveragePrecision,
     BinaryPrecisionRecallCurve
 )
-from torchmetrics.classification import DiceScore
+from torchmetrics.segmentation import DiceScore
 
 def set_seed(seed=42):
     """Sets a random seed for reproducibility."""
