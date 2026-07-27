@@ -10,7 +10,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import matplotlib.pyplot as plt
 from torchmetrics.classification import (
-    Dice,
+    DiceScore,
     BinaryAccuracy,
     BinaryPrecision,
     BinaryRecall,
@@ -145,7 +145,7 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, n
     # Global metrics calculated over the entire dataset
     global_metrics = {
         "Accuracy": BinaryAccuracy(threshold=threshold).to(device),
-        "Dice": Dice(threshold=threshold).to(device),
+        "Dice": DiceScore(threshold=threshold).to(device),
         "Precision": BinaryPrecision(threshold=threshold).to(device),
         "Recall": BinaryRecall(threshold=threshold).to(device),
         "Specificity": BinarySpecificity(threshold=threshold).to(device),
@@ -154,7 +154,7 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, n
     pr_curve_calculator = BinaryPrecisionRecallCurve().to(device)
     
     # Per-image Dice calculator
-    per_image_dice = Dice(threshold=threshold).to(device)
+    per_image_dice = DiceScore(threshold=threshold).to(device)
     
     # --- 4. Evaluation Loop ---
     all_results = []
