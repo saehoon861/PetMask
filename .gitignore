@@ -10,3 +10,6 @@ weights/
 
 #dataset
 OxfordPets/
+
+#visualization
+*.png
