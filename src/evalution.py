@@ -17,7 +17,6 @@ from torchmetrics.classification import (
     BinaryAveragePrecision,
     BinaryPrecisionRecallCurve
 )
-from torchmetrics.segmentation import DiceScore
 
 def set_seed(seed=42):
     """Sets a random seed for reproducibility."""
@@ -60,18 +59,23 @@ def plot_score_distribution(scores, save_path):
 
 def save_qualitative_results(sample_data, threshold, save_path):
     """Saves a 4-panel image comparing original, GT, prediction, and error map."""
-    image, gt_mask, pred_logits, score = sample_data
-    
-    # Inverse normalize image for visualization
-    # These are ImageNet stats from A.Normalize()
+
+    image = sample_data["image"]
+    gt_mask = sample_data["gt_mask"]
+    pred_logits = sample_data["pred_logits"]
+    score = sample_data["score"]
+
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
-    image = image.cpu().numpy().transpose((1, 2, 0))
+
+    image = image.numpy().transpose((1, 2, 0))
     image = std * image + mean
     image = np.clip(image, 0, 1)
 
-    gt_mask = gt_mask.cpu().numpy().squeeze()
-    pred_mask = (torch.sigmoid(pred_logits) > threshold).cpu().numpy().squeeze()
+    gt_mask = gt_mask.numpy().squeeze()
+    pred_mask = (
+        torch.sigmoid(pred_logits) > threshold
+    ).numpy().squeeze()
 
     # Create error map
     # TP: green, FP: red, FN: yellow
@@ -103,6 +107,18 @@ def save_qualitative_results(sample_data, threshold, save_path):
     plt.savefig(save_path)
     plt.close()
 
+  
+def binary_dice_score(logits, target, threshold=0.5, eps=1e-7):
+    probs = torch.sigmoid(logits)
+    pred = (probs > threshold).float()
+    target = target.float()
+
+    intersection = (pred * target).sum()
+    denominator = pred.sum() + target.sum()
+
+    return (2 * intersection + eps) / (denominator + eps)
+
+
 def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, num_examples):
     set_seed(42)
     from dataset.dataset_load import OxfordIIITPetsAugmented
@@ -120,6 +136,8 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, n
     # --- 2. Load Model & Data ---
     model = ResNetUNet(num_class).to(device)
     if os.path.exists(checkpoint_path):
+        #torch.load:저장된 가중치 파일을 읽어오는 역할
+        #load_state_dict:모델에 가중치를 불러오는 역할
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     else:
         print(f"Checkpoint not found at {checkpoint_path}"); return
@@ -145,48 +163,55 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, n
     # Global metrics calculated over the entire dataset
     global_metrics = {
         "Accuracy": BinaryAccuracy(threshold=threshold).to(device),
-        "Dice": DiceScore(threshold=threshold).to(device),
         "Precision": BinaryPrecision(threshold=threshold).to(device),
         "Recall": BinaryRecall(threshold=threshold).to(device),
         "Specificity": BinarySpecificity(threshold=threshold).to(device),
-        "AP": BinaryAveragePrecision().to(device),
+        "AP": BinaryAveragePrecision(thresholds=101).to(device),
     }
-    pr_curve_calculator = BinaryPrecisionRecallCurve().to(device)
+    pr_curve_calculator = BinaryPrecisionRecallCurve(thresholds=101).to(device)
     
     # Per-image Dice calculator
-    per_image_dice = DiceScore(threshold=threshold).to(device)
-    
+   
+    global_intersection = 0.0
+    global_pred_sum = 0.0
+    global_target_sum = 0.0
     # --- 4. Evaluation Loop ---
     all_results = []
-    with torch.no_grad():
+    with torch.no_grad(): #기울기 계산 비활성화
         for i, (image, mask) in enumerate(test_loader):
             image, mask = image.to(device), mask.to(device)
             binary_mask = (mask.squeeze(1) > 0.5).int()
             
             logits = model(image)
-            
+            pred_binary = (torch.sigmoid(logits.squeeze(1)) > threshold).float()
+            target_binary = binary_mask.float()
+
+            global_intersection += (pred_binary * target_binary).sum().item()
+            global_pred_sum += pred_binary.sum().item()
+            global_target_sum += target_binary.sum().item()
             # Update global metrics
             for metric in global_metrics.values():
                 metric.update(logits.squeeze(1), binary_mask)
             pr_curve_calculator.update(logits.squeeze(1), binary_mask)
 
             # Calculate and store per-image score and data
-            score = per_image_dice(logits, binary_mask).item()
+            score = binary_dice_score( logits.squeeze(1), binary_mask, threshold=threshold).item()
             all_results.append({
                 "score": score,
-                "image": image.squeeze(0), # Remove batch dim
-                "gt_mask": mask.squeeze(0),
-                "pred_logits": logits.squeeze(0)
-            })
+                "image": image.squeeze(0).detach().cpu(),
+                "gt_mask": binary_mask.squeeze(0).detach().cpu(),
+                "pred_logits": logits.squeeze(0).detach().cpu()
+                })
 
     # --- 5. Compute, Print, and Visualize Results ---
     # Global Metrics
+    global_dice = (2 * global_intersection + 1e-7) / (global_pred_sum + global_target_sum + 1e-7)
     final_scores = {name: metric.compute().item() for name, metric in global_metrics.items()}
     
     print("\n--- Test Set Performance (Calculated by TorchMetrics) ---")
     print(f"Metrics calculated at threshold: {threshold:.4f}")
     print("-" * 55)
-    print(f"Dice Score:        {final_scores['Dice']:.4f}")
+    print(f"Dice Score:        {global_dice:.4f}")
     print(f"Accuracy:          {final_scores['Accuracy']:.4f}")
     print(f"Precision:         {final_scores['Precision']:.4f}")
     print(f"Recall:            {final_scores['Recall']:.4f}")
@@ -215,7 +240,7 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, n
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PetMask Comprehensive Evaluation Script")
     parser.add_argument("--checkpoint", type=str, default="checkpoint.pth", help="Path to trained model checkpoint.")
-    parser.add_argument("--data_dir", type=str, default="/home/sehoon/workspace/PetMask/src/dataset", help="Dataset root directory.")
+    parser.add_argument("--data_dir", type=str, default="/content/PetMask/src/dataset", help="Dataset root directory.")
     parser.add_argument("--img_size", type=int, default=256, help="Image size used during training.")
     parser.add_argument("--threshold", type=float, default=0.5, help="Optimal threshold found on the validation set.")
     parser.add_argument("--num_examples", type=int, default=5, help="Number of best/worst examples to save.")
