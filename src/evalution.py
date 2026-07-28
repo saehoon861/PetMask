@@ -177,10 +177,22 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, n
     global_target_sum = 0.0
     # --- 4. Evaluation Loop ---
     all_results = []
-    with torch.no_grad(): #기울기 계산 비활성화
+    empty_gt_count = 0
+
+    with torch.no_grad():
         for i, (image, mask) in enumerate(test_loader):
             image, mask = image.to(device), mask.to(device)
+
             binary_mask = (mask.squeeze(1) > 0.5).int()
+
+            if binary_mask.sum().item() == 0:
+                empty_gt_count += 1
+                print(
+                    f"[Empty GT] index={i}, "
+                    f"raw_unique={torch.unique(mask)}, "
+                    f"mask_min={mask.min().item()}, "
+                    f"mask_max={mask.max().item()}"
+                )
             
             logits = model(image)
             pred_binary = (torch.sigmoid(logits.squeeze(1)) > threshold).float()
@@ -217,7 +229,7 @@ def run_evaluation(checkpoint_path, data_dir, batch_size, img_size, threshold, n
     print(f"Recall:            {final_scores['Recall']:.4f}")
     print(f"Specificity:       {final_scores['Specificity']:.4f}")
     print(f"Average Precision: {final_scores['AP']:.4f} (Threshold-Independent)")
-
+    print("Empty GT count:", empty_gt_count)
     # PR Curve
     precision, recall, _ = pr_curve_calculator.compute()
     plot_pr_curve(precision.cpu(), recall.cpu(), final_scores['AP'], os.path.join(output_dir, "pr_curve.png"))
