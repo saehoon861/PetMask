@@ -88,26 +88,74 @@ print("변환된 마스크 :", np.unique(mask_converted))
 
 class OxfordIIITPetsAugmented(torchvision.datasets.OxfordIIITPet):
     def __init__(self, root: str, split: str, transform=None, **kwargs):
-        super().__init__(root=root, split=split, target_types="segmentation", **kwargs)
+        super().__init__(
+            root=root,
+            split=split,
+            target_types="segmentation",
+            **kwargs
+        )
         self.transform = transform
 
     def __getitem__(self, idx):
-        # super() returns a PIL image and a PIL mask
         image, mask = super().__getitem__(idx)
 
-        # Convert PIL to NumPy for Albumentations
+        problem_indices = {1093, 1690, 1858, 2292, 2837, 2856, 3473}
+
+        # transform 전 원본 마스크 확인
+        if idx in problem_indices:
+            mask_before = np.array(mask)
+
+            print(f"\n[index={idx}] before transform")
+            print("type:", type(mask))
+            print("dtype:", mask_before.dtype)
+            print("unique:", np.unique(mask_before))
+            print("min:", mask_before.min())
+            print("max:", mask_before.max())
+            print("pet pixel count:", np.sum(mask_before == 1))
+
         image_np = np.array(image)
         mask_np = np.array(mask)
 
         if self.transform:
-            augmented = self.transform(image=image_np, mask=mask_np)
-            image = augmented['image']
-            mask = augmented['mask']
-        
-        # After augmentations, mask is a NumPy array. We apply trimap2f.
-        # trimap2f is designed to take a PIL image or NumPy array and convert to a soft-label tensor.
+            augmented = self.transform(
+                image=image_np,
+                mask=mask_np
+            )
+            image = augmented["image"]
+            mask = augmented["mask"]
+
+        # transform 후, trimap2f 직전 확인
+        if idx in problem_indices:
+            print(f"[index={idx}] after transform, before trimap2f")
+            print("type:", type(mask))
+            print("dtype:", mask.dtype)
+
+            if isinstance(mask, torch.Tensor):
+                print("shape:", mask.shape)
+                print("unique:", torch.unique(mask))
+                print("min:", mask.min().item())
+                print("max:", mask.max().item())
+                print("pet pixel count:", (mask == 1).sum().item())
+            else:
+                print("shape:", mask.shape)
+                print("unique:", np.unique(mask))
+                print("min:", mask.min())
+                print("max:", mask.max())
+                print("pet pixel count:", np.sum(mask == 1))
+
         mask = trimap2f(mask)
-        
+
+        # trimap2f 후 최종 마스크 확인
+        if idx in problem_indices:
+            print(f"[index={idx}] after trimap2f")
+            print("type:", type(mask))
+            print("dtype:", mask.dtype)
+            print("shape:", mask.shape)
+            print("unique:", torch.unique(mask))
+            print("min:", mask.min().item())
+            print("max:", mask.max().item())
+            print("pet pixel count:", (mask == 1.0).sum().item())
+
         return image, mask
     
     
