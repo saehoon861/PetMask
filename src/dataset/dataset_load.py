@@ -86,77 +86,136 @@ mask_converted = trimap2f(train_pets_target)
 print("변환된 마스크 :", np.unique(mask_converted)) 
 
 
-class OxfordIIITPetsAugmented(torchvision.datasets.OxfordIIITPet):
-    def __init__(self, root: str, split: str, transform=None, **kwargs):
-        super().__init__(
-            root=root,
-            split=split,
-            target_types="segmentation",
-            **kwargs
+def __getitem__(self, idx):
+    image, mask = super().__getitem__(idx)
+
+    problem_indices = {1093, 1690, 1858, 2292, 2837, 2856, 3473}
+
+    if idx in problem_indices:
+        from pathlib import Path
+
+        print("\n" + "=" * 70)
+        print(f"[index={idx}] sample information")
+
+        # torchvision OxfordIIITPet 내부에 저장된 실제 파일 경로
+        image_path = self._images[idx]
+        mask_path = self._segs[idx]
+
+        image_stem = Path(image_path).stem
+        mask_stem = Path(mask_path).stem
+
+        print("image path:", image_path)
+        print("mask path :", mask_path)
+        print("image stem:", image_stem)
+        print("mask stem :", mask_stem)
+        print("same stem :", image_stem == mask_stem)
+
+        # 디스크에 저장된 마스크 파일을 직접 열어서 확인
+        raw_mask_from_file = np.array(Image.open(mask_path))
+
+        print(f"\n[index={idx}] mask loaded directly from file")
+        print("dtype:", raw_mask_from_file.dtype)
+        print("shape:", raw_mask_from_file.shape)
+        print("unique:", np.unique(raw_mask_from_file))
+        print(
+            "unique counts:",
+            np.unique(raw_mask_from_file, return_counts=True)
         )
-        self.transform = transform
+        print("min:", raw_mask_from_file.min())
+        print("max:", raw_mask_from_file.max())
+        print("pet pixel count:", np.sum(raw_mask_from_file == 1))
+        print("background pixel count:", np.sum(raw_mask_from_file == 2))
+        print("border pixel count:", np.sum(raw_mask_from_file == 3))
 
-    def __getitem__(self, idx):
-        image, mask = super().__getitem__(idx)
+    # super().__getitem__()이 반환한 마스크 확인
+    if idx in problem_indices:
+        mask_before = np.array(mask)
 
-        problem_indices = {1093, 1690, 1858, 2292, 2837, 2856, 3473}
+        print(f"\n[index={idx}] before transform")
+        print("type:", type(mask))
+        print("dtype:", mask_before.dtype)
+        print("shape:", mask_before.shape)
+        print("unique:", np.unique(mask_before))
+        print(
+            "unique counts:",
+            np.unique(mask_before, return_counts=True)
+        )
+        print("min:", mask_before.min())
+        print("max:", mask_before.max())
+        print("pet pixel count:", np.sum(mask_before == 1))
+        print("background pixel count:", np.sum(mask_before == 2))
+        print("border pixel count:", np.sum(mask_before == 3))
 
-        # transform 전 원본 마스크 확인
-        if idx in problem_indices:
-            mask_before = np.array(mask)
+        # 디스크 원본과 super().__getitem__ 결과가 같은지 확인
+        print(
+            "raw file equals returned mask:",
+            np.array_equal(raw_mask_from_file, mask_before)
+        )
 
-            print(f"\n[index={idx}] before transform")
-            print("type:", type(mask))
-            print("dtype:", mask_before.dtype)
-            print("unique:", np.unique(mask_before))
-            print("min:", mask_before.min())
-            print("max:", mask_before.max())
-            print("pet pixel count:", np.sum(mask_before == 1))
+    image_np = np.array(image)
+    mask_np = np.array(mask)
 
-        image_np = np.array(image)
-        mask_np = np.array(mask)
+    if self.transform:
+        augmented = self.transform(
+            image=image_np,
+            mask=mask_np
+        )
+        image = augmented["image"]
+        mask = augmented["mask"]
 
-        if self.transform:
-            augmented = self.transform(
-                image=image_np,
-                mask=mask_np
-            )
-            image = augmented["image"]
-            mask = augmented["mask"]
+    # transform 후, trimap2f 직전 확인
+    if idx in problem_indices:
+        print(f"\n[index={idx}] after transform, before trimap2f")
+        print("type:", type(mask))
+        print("dtype:", mask.dtype)
 
-        # transform 후, trimap2f 직전 확인
-        if idx in problem_indices:
-            print(f"[index={idx}] after transform, before trimap2f")
-            print("type:", type(mask))
-            print("dtype:", mask.dtype)
-
-            if isinstance(mask, torch.Tensor):
-                print("shape:", mask.shape)
-                print("unique:", torch.unique(mask))
-                print("min:", mask.min().item())
-                print("max:", mask.max().item())
-                print("pet pixel count:", (mask == 1).sum().item())
-            else:
-                print("shape:", mask.shape)
-                print("unique:", np.unique(mask))
-                print("min:", mask.min())
-                print("max:", mask.max())
-                print("pet pixel count:", np.sum(mask == 1))
-
-        mask = trimap2f(mask)
-
-        # trimap2f 후 최종 마스크 확인
-        if idx in problem_indices:
-            print(f"[index={idx}] after trimap2f")
-            print("type:", type(mask))
-            print("dtype:", mask.dtype)
+        if isinstance(mask, torch.Tensor):
             print("shape:", mask.shape)
             print("unique:", torch.unique(mask))
+            print(
+                "unique counts:",
+                torch.unique(mask, return_counts=True)
+            )
             print("min:", mask.min().item())
             print("max:", mask.max().item())
-            print("pet pixel count:", (mask == 1.0).sum().item())
+            print("pet pixel count:", (mask == 1).sum().item())
+            print("background pixel count:", (mask == 2).sum().item())
+            print("border pixel count:", (mask == 3).sum().item())
 
-        return image, mask
+        else:
+            print("shape:", mask.shape)
+            print("unique:", np.unique(mask))
+            print(
+                "unique counts:",
+                np.unique(mask, return_counts=True)
+            )
+            print("min:", mask.min())
+            print("max:", mask.max())
+            print("pet pixel count:", np.sum(mask == 1))
+            print("background pixel count:", np.sum(mask == 2))
+            print("border pixel count:", np.sum(mask == 3))
+
+    mask = trimap2f(mask)
+
+    # trimap2f 후 최종 마스크 확인
+    if idx in problem_indices:
+        print(f"\n[index={idx}] after trimap2f")
+        print("type:", type(mask))
+        print("dtype:", mask.dtype)
+        print("shape:", mask.shape)
+        print("unique:", torch.unique(mask))
+        print(
+            "unique counts:",
+            torch.unique(mask, return_counts=True)
+        )
+        print("min:", mask.min().item())
+        print("max:", mask.max().item())
+        print("pet pixel count:", (mask == 1.0).sum().item())
+        print("background pixel count:", (mask == 0.0).sum().item())
+        print("border pixel count:", (mask == 0.5).sum().item())
+        print("=" * 70)
+
+    return image, mask
     
     
 def tensor_trimap(t):
@@ -231,3 +290,35 @@ def args_to_dict(**kwargs):
 # plt.axis("off")
 # plt.show()
 
+if __name__ == "__main__":
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+
+    transform = A.Compose([
+        A.LongestMaxSize(max_size=256),
+        A.PadIfNeeded(
+            min_height=256,
+            min_width=256,
+            border_mode=0,
+            fill=0,
+            fill_mask=0,
+        ),
+        ToTensorV2(),
+    ])
+
+    dataset = OxfordIIITPetsAugmented(
+        root=pets_path_test,
+        split="test",
+        transform=transform,
+        download=False,
+    )
+
+    problem_indices = [1093, 1690, 1858, 2292, 2837, 2856, 3473]
+
+    for idx in problem_indices:
+        print("\n" + "=" * 80)
+        print(f"Loading sample {idx}")
+        image, mask = dataset[idx]
+        print("returned image shape:", image.shape)
+        print("returned mask shape :", mask.shape)
+        print("=" * 80)
