@@ -300,3 +300,35 @@ def args_to_dict(**kwargs):
 # plt.axis("off")
 # plt.show()
 
+if __name__ == "__main__":
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+
+    transform = A.Compose([
+        A.LongestMaxSize(max_size=256),
+        A.PadIfNeeded(
+            min_height=256,
+            min_width=256,
+            border_mode=0,
+            fill=0,
+            fill_mask=0,
+        ),
+        ToTensorV2(),
+    ])
+
+    dataset = OxfordIIITPetsAugmented(
+        root=pets_path_test,
+        split="test",
+        transform=transform,
+        download=False,
+    )
+
+    problem_indices = [1093, 1690, 1858, 2292, 2837, 2856, 3473]
+
+    for idx in problem_indices:
+        print("\n" + "=" * 80)
+        print(f"Loading sample {idx}")
+        image, mask = dataset[idx]
+        print("returned image shape:", image.shape)
+        print("returned mask shape :", mask.shape)
+        print("=" * 80)
