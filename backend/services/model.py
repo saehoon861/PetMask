@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CHECKPOINT_PATH = Path(
     os.getenv(
         "MODEL_CHECKPOINT",
-        PROJECT_ROOT / "src" / "checkpoint.pth"
+        PROJECT_ROOT / "checkpoints" / "checkpoint.pth"
     )
 )
 
