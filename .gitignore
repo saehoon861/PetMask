@@ -13,3 +13,6 @@ OxfordPets/
 
 #visualization
 *.png
+
+#환경변수
+.env
