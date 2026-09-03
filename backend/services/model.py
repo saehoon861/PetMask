@@ -66,7 +66,7 @@ class PetMaskModelService:
                 f"{self.checkpoint_path}"
             )
 
-        model = ResNetUNet(num_class=1)
+        model = ResNetUNet(n_class=1)
 
         state_dict = torch.load(
             self.checkpoint_path,
