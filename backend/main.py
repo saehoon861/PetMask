@@ -11,3 +11,5 @@ app.include_router(router)
 @app.get("/")
 async def root():
     return FileResponse("frontend/index.html")
+
+
