@@ -4,9 +4,9 @@ __pycache__/
 .venv/
 
 #Model weights
-weights/
-*.pth
-*.pt
+# weights/
+# *.pth
+# *.pt
 
 #dataset
 OxfordPets/

@@ -10,7 +10,7 @@ from albumentations.pytorch import ToTensorV2
 from src.models.model import ResNetUNet
 
 
-IMG_SIZE = 256
+IMG_SIZE = 512
 
 DEFAULT_THRESHOLD = float(
     os.getenv("MODEL_THRESHOLD", "0.87")
@@ -68,6 +68,8 @@ class PetMaskModelService:
 
         model = ResNetUNet(n_class=1)
 
+
+#torch.load()는 파일을 읽는 것, model.load_state_dict()는 읽어온 가중치를 모델에 넣는 것
         state_dict = torch.load(
             self.checkpoint_path,
             map_location=self.device,
@@ -83,7 +85,7 @@ class PetMaskModelService:
     def preprocess(
         self,
         image: np.ndarray
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict]:
 
         if not isinstance(image, np.ndarray):
             raise TypeError(
@@ -95,18 +97,74 @@ class PetMaskModelService:
                 "image must have shape (H, W, 3)"
             )
 
+        original_h, original_w = image.shape[:2]
+
+        scale = IMG_SIZE / max(
+            original_h,
+            original_w,
+        )
+
+        resized_h = round(original_h * scale)
+        resized_w = round(original_w * scale)
+
         transformed = self.transform(
             image=image
         )
 
         tensor = transformed["image"].float()
-
-        # [C, H, W]
-        #      ↓
-        # [1, C, H, W]
         tensor = tensor.unsqueeze(0)
 
-        return tensor.to(self.device)
+        meta = {
+            "original_h": original_h,
+            "original_w": original_w,
+            "resized_h": resized_h,
+            "resized_w": resized_w,
+        }
+
+        return tensor.to(self.device), meta
+    
+    def postprocess(
+        self,
+        probability: np.ndarray,
+        mask: np.ndarray,
+        meta: dict,
+    ) -> tuple[np.ndarray, np.ndarray]:
+
+        original_h = meta["original_h"]
+        original_w = meta["original_w"]
+
+        resized_h = meta["resized_h"]
+        resized_w = meta["resized_w"]
+
+        # PadIfNeeded는 기본적으로 중앙 기준 padding
+        pad_top = (IMG_SIZE - resized_h) // 2
+        pad_left = (IMG_SIZE - resized_w) // 2
+
+        # padding 제거
+        probability = probability[
+            pad_top:pad_top + resized_h,
+            pad_left:pad_left + resized_w
+        ]
+
+        mask = mask[
+            pad_top:pad_top + resized_h,
+            pad_left:pad_left + resized_w
+        ]
+
+        # 원본 이미지 크기로 복원
+        probability = cv2.resize(
+            probability,
+            (original_w, original_h),
+            interpolation=cv2.INTER_LINEAR,
+        )
+
+        mask = cv2.resize(
+            mask,
+            (original_w, original_h),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        
+        return probability, mask
 
     @torch.inference_mode()
     def predict(
@@ -114,7 +172,7 @@ class PetMaskModelService:
         image: np.ndarray
     ):
 
-        input_tensor = self.preprocess(image)
+        input_tensor, meta = self.preprocess(image)
 
         outputs = self.model(input_tensor)
 
@@ -141,6 +199,12 @@ class PetMaskModelService:
             .numpy()
             .astype(np.uint8)
             * 255
+        )
+
+        probability, mask = self.postprocess(
+            probability,
+            mask,
+            meta,
         )
 
         return {
