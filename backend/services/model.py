@@ -173,13 +173,9 @@ class PetMaskModelService:
     ):
 
         input_tensor, meta = self.preprocess(image)
-
         outputs = self.model(input_tensor)
-
         logits = outputs[:, 0]
-
         probability = torch.sigmoid(logits)
-
         binary_mask = (
             probability >= self.threshold
         )
@@ -217,7 +213,29 @@ class PetMaskModelService:
 model_service = PetMaskModelService()
 
 if __name__ == "__main__":
+    image_path = "test.jpg"
+
+    image = cv2.imread(image_path)
+
+    if image is None:
+        raise FileNotFoundError(
+            f"Image not found: {image_path}"
+        )
+
+    image = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2RGB,
+    )
+
+    result = model_service.predict(image)
+
     print("device:", model_service.device)
     print("checkpoint:", model_service.checkpoint_path)
-    print("threshold:", model_service.threshold)
-    print("model loaded successfully")
+    print("threshold:", result["threshold"])
+    print("probability shape:", result["probability"].shape)
+    print("mask shape:", result["mask"].shape)
+
+    cv2.imwrite(
+        "output_mask.png",
+        result["mask"],
+    )
