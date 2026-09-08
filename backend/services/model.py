@@ -123,6 +123,7 @@ class PetMaskModelService:
 
         return tensor.to(self.device), meta
     
+
     def postprocess(
         self,
         probability: np.ndarray,
@@ -166,6 +167,28 @@ class PetMaskModelService:
         
         return probability, mask
 
+    def create_overlay(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        alpha: float = 0.5,
+    ) -> np.ndarray:
+        overlay = image.copy()
+
+        mask_bool = mask > 0
+
+        overlay[mask_bool] = (0, 255, 0)
+
+        result = cv2.addWeighted(
+            image,
+            1 - alpha,
+            overlay,
+            alpha,
+            0,
+        )
+
+        return result
+
     @torch.inference_mode()
     def predict(
         self,
@@ -202,40 +225,16 @@ class PetMaskModelService:
             mask,
             meta,
         )
+        
+        overlay = self.create_overlay(image, mask)
+        
 
         return {
             "probability": probability,
             "mask": mask,
             "threshold": self.threshold,
+            "overlay": overlay
         }
 
 
-model_service = PetMaskModelService()
-
-if __name__ == "__main__":
-    image_path = "test.jpg"
-
-    image = cv2.imread(image_path)
-
-    if image is None:
-        raise FileNotFoundError(
-            f"Image not found: {image_path}"
-        )
-
-    image = cv2.cvtColor(
-        image,
-        cv2.COLOR_BGR2RGB,
-    )
-
-    result = model_service.predict(image)
-
-    print("device:", model_service.device)
-    print("checkpoint:", model_service.checkpoint_path)
-    print("threshold:", result["threshold"])
-    print("probability shape:", result["probability"].shape)
-    print("mask shape:", result["mask"].shape)
-
-    cv2.imwrite(
-        "output_mask.png",
-        result["mask"],
-    )
+   

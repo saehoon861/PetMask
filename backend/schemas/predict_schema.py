@@ -8,3 +8,5 @@ class SegmentationResponse(BaseModel):
     height: int
     mask_url: str
     message: str
+    
+    

@@ -95,7 +95,10 @@ async def segment(file: UploadFile = File(...)):
 
    # 8. 모델 추론
     try:
-        probability, mask = model_service.predict(image)
+        result = model_service.predict(image)
+
+        mask = result["mask"]
+        overlay = result["overlay"]
 
             
     except Exception:
@@ -108,10 +111,10 @@ async def segment(file: UploadFile = File(...)):
         )
         
     result_id = str(uuid4())
-    mask_path = RESULT_DIR / f"{result_id}.png"
+    result_path = RESULT_DIR / f"{result_id}.png"
     success = cv2.imwrite(
-        str(mask_path),
-        mask,
+        str(result_path),
+        overlay,
     )
     
     if not success:
@@ -119,7 +122,7 @@ async def segment(file: UploadFile = File(...)):
             status_code=500,
             detail={
                 "code": "MASK_SAVE_FAILED",
-                "message": "마스크 이미지를 저장하는 중 오류가 발생했습니다.",
+                "message": "결과 이미지를 저장하는 중 오류가 발생했습니다.",
             },
         )
         
@@ -134,11 +137,11 @@ async def segment(file: UploadFile = File(...)):
     )
    
     
-@router.get("/api/results/{result_id}/mask")
-async def get_mask(result_id: str):
-    mask_path = RESULT_DIR / f"{result_id}.png"
+@router.get("/api/results/{result_id}/image")
+async def get_image(result_id: str):
+    result_path = RESULT_DIR / f"{result_id}.png"
 
-    if not mask_path.exists():
+    if not result_path.exists():
         raise HTTPException(
             status_code=404,
             detail={
@@ -148,6 +151,8 @@ async def get_mask(result_id: str):
         )
 
     return FileResponse(
-        path=mask_path,
+        path=result_path,
         media_type="image/png",
     )
+    
+    
