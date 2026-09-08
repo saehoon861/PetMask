@@ -1,6 +1,5 @@
 from backend.services.model import IMG_SIZE, model_service
 from backend.schemas import ImageUploadResponse
-
 from pathlib import Path
 
 import cv2
@@ -90,10 +89,23 @@ async def segment(file: UploadFile = File(...)):
             },
         )
 
-    # 아직 모델 추론은 하지 않음
+   # 8. 모델 추론
+    try:
+        probability, mask = model_service.predict(image)
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INFERENCE_FAILED",
+                "message": "모델 추론 중 오류가 발생했습니다.",
+            },
+        )
+
+    # 9. 응답
     return ImageUploadResponse(
         filename=file.filename,
         width=image.shape[1],
         height=image.shape[0],
-        message="이미지 검증에 성공했습니다.",
+        message="이미지 세그멘테이션이 완료되었습니다.",
     )
