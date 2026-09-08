@@ -1,14 +1,18 @@
 from backend.services.model import IMG_SIZE, model_service
-from backend.schemas import ImageUploadResponse
+from backend.schemas import SegmentationResponse
 from pathlib import Path
-
+from uuid import uuid4
 import cv2
 import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
+
+RESULT_DIR = Path("temp/results")
+RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter()
 
@@ -29,7 +33,7 @@ async def get_model_info():
 
 @router.post(
     "/api/segment",
-    response_model=ImageUploadResponse,
+    response_model=SegmentationResponse,
 )
 async def segment(file: UploadFile = File(...)):
     # 1. 파일 이름 확인
@@ -93,6 +97,7 @@ async def segment(file: UploadFile = File(...)):
     try:
         probability, mask = model_service.predict(image)
 
+            
     except Exception:
         raise HTTPException(
             status_code=500,
@@ -101,11 +106,48 @@ async def segment(file: UploadFile = File(...)):
                 "message": "모델 추론 중 오류가 발생했습니다.",
             },
         )
-
+        
+    result_id = str(uuid4())
+    mask_path = RESULT_DIR / f"{result_id}.png"
+    success = cv2.imwrite(
+        str(mask_path),
+        mask,
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "MASK_SAVE_FAILED",
+                "message": "마스크 이미지를 저장하는 중 오류가 발생했습니다.",
+            },
+        )
+        
     # 9. 응답
-    return ImageUploadResponse(
+    return SegmentationResponse(
+        result_id=result_id,
         filename=file.filename,
         width=image.shape[1],
         height=image.shape[0],
+        mask_url=f"/api/results/{result_id}/mask",
         message="이미지 세그멘테이션이 완료되었습니다.",
+    )
+   
+    
+@router.get("/api/results/{result_id}/mask")
+async def get_mask(result_id: str):
+    mask_path = RESULT_DIR / f"{result_id}.png"
+
+    if not mask_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "RESULT_NOT_FOUND",
+                "message": "요청한 마스크 결과를 찾을 수 없습니다.",
+            },
+        )
+
+    return FileResponse(
+        path=mask_path,
+        media_type="image/png",
     )
