@@ -237,4 +237,4 @@ class PetMaskModelService:
         }
 
 
-   
+model_service = PetMaskModelService()

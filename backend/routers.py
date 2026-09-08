@@ -1,5 +1,5 @@
 from backend.services.model import IMG_SIZE, model_service
-from backend.schemas import SegmentationResponse
+from backend.schemas.predict_schema import SegmentationResponse
 from pathlib import Path
 from uuid import uuid4
 import cv2
