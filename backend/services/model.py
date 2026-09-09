@@ -13,7 +13,7 @@ from src.models.model import ResNetUNet
 IMG_SIZE = 512
 
 DEFAULT_THRESHOLD = float(
-    os.getenv("MODEL_THRESHOLD", "0.87")
+    os.getenv("MODEL_THRESHOLD", "0.85")
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

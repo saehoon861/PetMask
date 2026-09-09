@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 
 from backend.routers import router
 
-app = FastAPI()
+app = FastAPI(docs_url="/docs")
 
 app.include_router(router)
 

@@ -97,7 +97,6 @@ async def segment(file: UploadFile = File(...)):
     try:
         result = model_service.predict(image)
 
-        mask = result["mask"]
         overlay = result["overlay"]
 
             
@@ -121,7 +120,7 @@ async def segment(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=500,
             detail={
-                "code": "MASK_SAVE_FAILED",
+                "code": "RESULT_SAVE_FAILED",
                 "message": "결과 이미지를 저장하는 중 오류가 발생했습니다.",
             },
         )
@@ -132,7 +131,7 @@ async def segment(file: UploadFile = File(...)):
         filename=file.filename,
         width=image.shape[1],
         height=image.shape[0],
-        mask_url=f"/api/results/{result_id}/mask",
+        image_url=f"/api/results/{result_id}/image",
         message="이미지 세그멘테이션이 완료되었습니다.",
     )
    

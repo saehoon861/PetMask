@@ -103,7 +103,9 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
     preds = (probs >= 0.5).long() 
     
     # 클래스 라벨 정의
-    gt_class_labels = {0: "background", 1: "border", 2: "pet"}
+    gt_class_labels = {0: "background", 1: "pet"}
+
+    gt_int = labels[i].squeeze().cpu().numpy().astype(np.uint8)
     pred_class_labels = {0: "background", 1: "pet"}
 
     original_images, gt_images, pred_images, heatmap_images = [], [], [], []
@@ -257,7 +259,7 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
                     # 성능 메트릭 계산 (IoU, Acc)
                     with torch.no_grad():
                         # target을 0.5 기준으로 hard-label로 변환
-                        target_for_metric = (labels.squeeze(1) > 0.5).long()
+                        target_for_metric = labels.squeeze(1).long()
                         
                         # BinaryMetrics 반환값: [pixel_acc, dice, precision, specificity, recall]
                         
@@ -391,7 +393,7 @@ def find_optimal_threshold(model, dataloader):
             
             # Ground truth labels should be binary for metric calculation
             # target is already float (0.0, 0.5, 1.0), convert to 0 or 1 for pet mask
-            targets_binary = (labels.squeeze(1) == 1.0).long() 
+            targets_binary = labels.squeeze(1).long()
 
             all_preds.append(outputs.cpu())
             all_targets.append(targets_binary.cpu())

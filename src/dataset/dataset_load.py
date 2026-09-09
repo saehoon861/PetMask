@@ -41,36 +41,61 @@ print(f"Number of test samples: {len(pets_test_orig)}")
 # enum: 선택 가능한 값들을 이름으로 묶어놓은 것 
 from enum import IntEnum
 class TrimapClass(IntEnum):
-    PET = 0
-    BACKGROUND = 1
-    BORDER = 2
+    PET = 1
+    BACKGROUND = 2
+    BORDER = 3
     
 #BCEWithLogitsLoss는 시그모이드 활성화 함수와 이진 교차 엔트로피 손실을 결합한 손실 함수 이 함수는 정답이 float형을 필요로 함
 # tripmap를 통해서 mask를 0 0.5 1로 바꿔주는 함수 0 = 클래스1이 절대 아님 1 = 클래스1이 확실히 맞음 0.5 = 클래스1인지 클래스0인지 확실하지 않음
-def trimap2f(trimap):
-    # Handle both Tensors (from Albumentations) and PIL/NumPy arrays
+# def trimap2f(trimap):
+#     # Handle both Tensors (from Albumentations) and PIL/NumPy arrays
+#     if isinstance(trimap, torch.Tensor):
+#         # If it's a tensor, assume it has integer values {1, 2, 3}
+#         t = trimap.long()
+#     else:
+#         # If it's PIL/NumPy, convert to tensor and scale back to integer values
+#         t = (img2t(trimap) * 255.0).long()
+
+#     # Ensure t is 3D (C, H, W) for consistency, even if C=1
+#     if t.dim() == 2:
+#         t = t.unsqueeze(0)
+    
+#     # Create a new float tensor for the target soft labels
+#     target = torch.full_like(t, 0.0, dtype=torch.float32, device=t.device)
+    
+#     # Apply the mapping based on the comments' intention
+#     # Pet (value 1) becomes 1.0
+#     target[t == 1] = 1.0
+#     # Background (value 2) becomes 0.0
+#     target[t == 2] = 0.0
+#     # Border (value 3) becomes 0.5 (uncertain)
+#     target[t == 3] = 0.5
+    
+#     return target
+
+
+def trimap2binary(trimap):
     if isinstance(trimap, torch.Tensor):
-        # If it's a tensor, assume it has integer values {1, 2, 3}
         t = trimap.long()
     else:
-        # If it's PIL/NumPy, convert to tensor and scale back to integer values
         t = (img2t(trimap) * 255.0).long()
 
-    # Ensure t is 3D (C, H, W) for consistency, even if C=1
     if t.dim() == 2:
         t = t.unsqueeze(0)
-    
-    # Create a new float tensor for the target soft labels
-    target = torch.full_like(t, 0.0, dtype=torch.float32, device=t.device)
-    
-    # Apply the mapping based on the comments' intention
-    # Pet (value 1) becomes 1.0
-    target[t == 1] = 1.0
-    # Background (value 2) becomes 0.0
-    target[t == 2] = 0.0
-    # Border (value 3) becomes 0.5 (uncertain)
-    target[t == 3] = 0.5
-    
+
+    target = torch.zeros_like(
+        t,
+        dtype=torch.float32,
+        device=t.device
+    )
+
+    foreground = (
+        (t == TrimapClass.PET)
+        | (t == TrimapClass.BORDER)
+    )
+
+    target[foreground] = 1.0
+
     return target
     
 # plt.imshow(t2img(trimap2f(train_pets_target)))
@@ -82,7 +107,7 @@ import numpy as np
 mask = np.array(train_pets_target)
 print("기존 마스크 :", np.unique(mask))
 
-mask_converted = trimap2f(train_pets_target)
+mask_converted = trimap2binary(train_pets_target)
 print("변환된 마스크 :", np.unique(mask_converted)) 
 
 
@@ -172,6 +197,8 @@ class OxfordIIITPetsAugmented(torchvision.datasets.OxfordIIITPet):
             )
             image = augmented["image"]
             mask = augmented["mask"]
+        
+        mask = trimap2binary(mask)
 
         # transform 후, trimap2f 직전 확인
         if idx in problem_indices:
@@ -205,7 +232,7 @@ class OxfordIIITPetsAugmented(torchvision.datasets.OxfordIIITPet):
                 print("background pixel count:", np.sum(mask == 2))
                 print("border pixel count:", np.sum(mask == 3))
 
-        mask = trimap2f(mask)
+       
 
         # trimap2f 후 최종 마스크 확인
         if idx in problem_indices:

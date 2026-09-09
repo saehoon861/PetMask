@@ -6,7 +6,7 @@ class SegmentationResponse(BaseModel):
     filename: str
     width: int
     height: int
-    mask_url: str
+    image_url: str
     message: str
     
     
