@@ -5,8 +5,7 @@ import torch.nn.functional as F
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import cv2
-
-from evalution import BinaryMetrics  # Metrics 계산기 임포트
+  # Metrics 계산기 임포트
 from dataset.dataset_load import OxfordIIITPetsAugmented
 from models.model import ResNetUNet
 import time
@@ -18,7 +17,12 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import TensorDataset, DataLoader, random_split, ConcatDataset
 import random
-from torchmetrics.classification import BinaryAveragePrecision
+from torchmetrics.classification import (
+    BinaryAccuracy,
+    BinaryPrecision,
+    BinaryRecall,
+    BinaryAveragePrecision,
+)
 import numpy as np
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -103,9 +107,10 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
     preds = (probs >= 0.5).long() 
     
     # 클래스 라벨 정의
+
     gt_class_labels = {0: "background", 1: "pet"}
 
-    gt_int = labels[i].squeeze().cpu().numpy().astype(np.uint8)
+    
     pred_class_labels = {0: "background", 1: "pet"}
 
     original_images, gt_images, pred_images, heatmap_images = [], [], [], []
@@ -116,10 +121,13 @@ def log_images_to_wandb(inputs, labels, outputs, epoch):
         img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min() + 1e-5)
         
         # 정답 마스크 준비
-        gt_float = labels[i].squeeze().cpu().numpy()
-        gt_int = np.zeros_like(gt_float, dtype=np.uint8)
-        gt_int[gt_float == 0.5] = 1 # Border
-        gt_int[gt_float == 1.0] = 2 # Pet
+        gt_int = (
+            labels[i]
+            .squeeze()
+            .cpu()
+            .numpy()
+            .astype(np.uint8)
+            )
 
         # 예측 마스크 준비
         pred_mask_np = preds[i].cpu().numpy()
@@ -176,8 +184,9 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
     stop_count = 0
 
     # 메트릭 계산기 초기화
-    soft_metric_calc = BinaryMetrics(activation='sigmoid')
-    hard_metric_calc = BinaryMetrics(activation='0-1')
+    accuracy_calculator = BinaryAccuracy(threshold=0.5).to(device)
+    precision_calculator = BinaryPrecision(threshold=0.5).to(device)
+    recall_calculator = BinaryRecall(threshold=0.5).to(device)
     ap_calculator = BinaryAveragePrecision().to(device)
 
 
@@ -236,8 +245,12 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
             epoch_samples = 0
             
             # Initialize metric accumulators for the epoch
-            total_soft_pixel_acc, total_soft_dice, total_soft_precision, total_soft_recall = 0, 0, 0, 0
-            total_hard_pixel_acc, total_hard_dice, total_hard_precision, total_hard_recall = 0, 0, 0, 0
+            accuracy_calculator.reset()
+            precision_calculator.reset()
+            recall_calculator.reset()
+            dice_intersection = 0.0
+            dice_pred_sum = 0.0
+            dice_target_sum = 0.0
             
             if phase == 'train':
                 optimizer.zero_grad()
@@ -254,66 +267,108 @@ def train_model(model, dataloaders, optimizer, scheduler, checkpoint_path, num_e
 
                     # Normalize loss for gradient accumulation
                     if phase == 'train':
-                        loss = loss / args.gradient_accumulation_steps
+                        group_start = (
+                            i // args.gradient_accumulation_steps
+                        ) * args.gradient_accumulation_steps
+
+                        current_group_size = min(
+                            args.gradient_accumulation_steps,
+                            len(dataloaders[phase]) - group_start
+                        )
+
+                        loss = loss / current_group_size
 
                     # 성능 메트릭 계산 (IoU, Acc)
                     with torch.no_grad():
-                        # target을 0.5 기준으로 hard-label로 변환
                         target_for_metric = labels.squeeze(1).long()
-                        
-                        # BinaryMetrics 반환값: [pixel_acc, dice, precision, specificity, recall]
-                        
-                        # Soft-threshold metrics (using probabilities)
-                        soft_metrics = soft_metric_calc(target_for_metric, outputs[:, 0:1])
-                        total_soft_pixel_acc += soft_metrics[0] * inputs.size(0)
-                        total_soft_dice += soft_metrics[1] * inputs.size(0)
-                        total_soft_precision += soft_metrics[2] * inputs.size(0)
-                        total_soft_recall += soft_metrics[4] * inputs.size(0)
+                        logits_for_metric = outputs[:, 0]
 
-                        # Hard-threshold metrics (at 0.5)
-                        hard_metrics = hard_metric_calc(target_for_metric, outputs[:, 0:1])
-                        total_hard_pixel_acc += hard_metrics[0] * inputs.size(0)
-                        total_hard_dice += hard_metrics[1] * inputs.size(0)
-                        total_hard_precision += hard_metrics[2] * inputs.size(0)
-                        total_hard_recall += hard_metrics[4] * inputs.size(0)
+                        pred_for_dice = (
+                            torch.sigmoid(logits_for_metric) >= 0.5
+                        ).float()
 
-                        # AP 계산 (validation set에서만)
+                        target_for_dice = target_for_metric.float()
+
+                        dice_intersection += (
+                            pred_for_dice * target_for_dice
+                        ).sum().item()
+
+                        dice_pred_sum += pred_for_dice.sum().item()
+                        dice_target_sum += target_for_dice.sum().item()
+
+                        accuracy_calculator.update(
+                            logits_for_metric,
+                            target_for_metric
+                        )
+
+                        precision_calculator.update(
+                            logits_for_metric,
+                            target_for_metric
+                        )
+
+                        recall_calculator.update(
+                            logits_for_metric,
+                            target_for_metric
+                        )
+
                         if phase == 'val':
-                            ap_calculator.update(outputs[:, 0], target_for_metric)
+                            ap_calculator.update(
+                                logits_for_metric,
+                                target_for_metric
+                            )
 
 
                     # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
-                        if (i + 1) % args.gradient_accumulation_steps == 0:
+
+                        is_accumulation_step = (
+                            (i + 1) % args.gradient_accumulation_steps == 0
+                        )
+
+                        is_last_batch = (
+                            i + 1 == len(dataloaders[phase])
+                        )
+
+                        if is_accumulation_step or is_last_batch:
                             optimizer.step()
                             optimizer.zero_grad()
 
-                # 시각화 로그: 검증 단계의 첫 번째 배치 이미지만 기록
-                if phase == 'val' and epoch_samples == 0 and not use_mock:
-                    log_images_to_wandb(inputs, labels, outputs, epoch)
+                    # 시각화 로그: 검증 단계의 첫 번째 배치 이미지만 기록
+                    if phase == 'val' and epoch_samples == 0 and not use_mock:
+                        log_images_to_wandb(inputs, labels, outputs, epoch)
 
-                # statistics
-                epoch_samples += inputs.size(0)
+                    # statistics
+                    epoch_samples += inputs.size(0)
 
             print_metrics(metrics, epoch_samples, phase)
             epoch_loss = metrics['loss'] / epoch_samples
+
+                # 시각화 로그: 검증 단계의 첫 번째 배치 이미지만 기록
+            #     if phase == 'val' and epoch_samples == 0 and not use_mock:
+            #         log_images_to_wandb(inputs, labels, outputs, epoch)
+
+            #     # statistics
+            #     epoch_samples += inputs.size(0)
+
+            # print_metrics(metrics, epoch_samples, phase)
+            # epoch_loss = metrics['loss'] / epoch_samples
             
             # Epoch-level WandB logging
+            epoch_accuracy = accuracy_calculator.compute().item()
+            epoch_precision = precision_calculator.compute().item()
+            epoch_recall = recall_calculator.compute().item()
+            epoch_dice = (2.0 * dice_intersection + 1e-7) / (dice_pred_sum + dice_target_sum + 1e-7)
+            
             log_payload = {
                 f"{phase}/loss": epoch_loss,
-                f"{phase}/bce": metrics['bce'] / epoch_samples,
-                f"{phase}/dice_loss": metrics['dice'] / epoch_samples,
-                # Soft Metrics
-                f"{phase}/pixel_acc_soft": total_soft_pixel_acc / epoch_samples,
-                f"{phase}/dice_score_soft": total_soft_dice / epoch_samples,
-                f"{phase}/precision_soft": total_soft_precision / epoch_samples,
-                f"{phase}/recall_soft": total_soft_recall / epoch_samples,
-                # Hard Metrics
-                f"{phase}/pixel_acc_hard": total_hard_pixel_acc / epoch_samples,
-                f"{phase}/dice_score_hard": total_hard_dice / epoch_samples,
-                f"{phase}/precision_hard": total_hard_precision / epoch_samples,
-                f"{phase}/recall_hard": total_hard_recall / epoch_samples,
+                f"{phase}/bce": metrics["bce"] / epoch_samples,
+                f"{phase}/dice_loss": metrics["dice"] / epoch_samples,
+
+                f"{phase}/accuracy": epoch_accuracy,
+                f"{phase}/precision": epoch_precision,
+                f"{phase}/recall": epoch_recall,
+                f"{phase}/dice": epoch_dice
             }
 
             if phase == 'val':
