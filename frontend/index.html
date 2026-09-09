@@ -2,11 +2,59 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PetMask</title>
+
+    <link rel="stylesheet" href="/frontend/css/style.css">
 </head>
 
 <body>
-    <h1>PetMask</h1>
-    <p>Pet Segmentation Demo</p>
+
+    <header>
+        <h1>PetMask</h1>
+    </header>
+
+    <main>
+        <section class="upload-section">
+            <h2>Pet Segmentation</h2>
+            <p>Upload Pet Image</p>
+
+            <div class="drop-zone">
+                <p>Drag & Drop</p>
+                <p>or click to upload</p>
+
+                <input
+                    type="file"
+                    id="image-input"
+                    accept=".jpg,.jpeg,.png"
+                >
+            </div>
+
+            <button id="segment-button">
+                Segment
+            </button>
+        </section>
+
+        <section class="result-section">
+
+            <div class="image-panel">
+                <h3>Original</h3>
+
+                <div class="image-box">
+                    <img id="original-image" alt="Original image">
+                </div>
+            </div>
+
+            <div class="image-panel">
+                <h3>Result</h3>
+
+                <div class="image-box">
+                    <img id="result-image" alt="Segmentation result">
+                </div>
+            </div>
+
+        </section>
+    </main>
+
 </body>
 </html>
