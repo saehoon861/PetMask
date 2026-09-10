@@ -99,7 +99,8 @@ segmentButton.addEventListener("click", async () => {
         }
 
         const result = await response.json();
-        console.log(result);
+        // console.log(result);
+        resultImage.src = result.overlay_url;
 
     } catch (error) {
         console.error(error);
