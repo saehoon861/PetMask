@@ -1,6 +1,7 @@
 const dropZone = document.getElementById("drop-zone");
 const imageInput = document.getElementById("image-input");
 const originalImage = document.getElementById("original-image");
+const resultImage = document.getElementById("result-image");
 
 let selectedFile = null;
 let previewUrl = null;
@@ -107,7 +108,7 @@ segmentButton.addEventListener("click", async () => {
 
         console.log("result:", result);
 
-        resultImage.src = result.overlay_url;
+        resultImage.src = result.image_url;
 
     } catch (error) {
         console.error("request error:", error);
