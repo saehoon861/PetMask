@@ -1,8 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>PetMask</title>
 
     <link rel="stylesheet" href="/frontend/css/style.css">
@@ -15,11 +17,13 @@
     </header>
 
     <main>
+
         <section class="upload-section">
+
             <h2>Pet Segmentation</h2>
             <p>Upload Pet Image</p>
 
-            <div class="drop-zone">
+            <div class="drop-zone" id="drop-zone">
                 <p>Drag & Drop</p>
                 <p>or click to upload</p>
 
@@ -27,13 +31,16 @@
                     type="file"
                     id="image-input"
                     accept=".jpg,.jpeg,.png"
+                    hidden
                 >
             </div>
 
             <button id="segment-button">
                 Segment
             </button>
+
         </section>
+
 
         <section class="result-section">
 
@@ -41,20 +48,31 @@
                 <h3>Original</h3>
 
                 <div class="image-box">
-                    <img id="original-image" alt="Original image">
+                    <img
+                        id="original-image"
+                        alt="Original image"
+                    >
                 </div>
             </div>
+
 
             <div class="image-panel">
                 <h3>Result</h3>
 
                 <div class="image-box">
-                    <img id="result-image" alt="Segmentation result">
+                    <img
+                        id="result-image"
+                        alt="Segmentation result"
+                    >
                 </div>
             </div>
 
         </section>
+
     </main>
 
+    <script src="/frontend/js/main.js"></script>
+
 </body>
+
 </html>
