@@ -94,16 +94,23 @@ segmentButton.addEventListener("click", async () => {
             body: formData,
         });
 
+        console.log("status:", response.status);
+
         if (!response.ok) {
+            const errorText = await response.text();
+            console.log("server error:", errorText);
+
             throw new Error("이미지 처리에 실패했습니다.");
         }
 
         const result = await response.json();
-        // console.log(result);
+
+        console.log("result:", result);
+
         resultImage.src = result.overlay_url;
 
     } catch (error) {
-        console.error(error);
+        console.error("request error:", error);
         alert("서버 요청 중 오류가 발생했습니다.");
     }
 });
