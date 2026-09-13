@@ -72,6 +72,7 @@ async def segment(file: UploadFile = File(...)):
     try:
         result = await run_in_threadpool(model_service.predict, image)
         overlay = result["overlay"]
+        heatmap = await run_in_threadpool(model_service.create_heatmap, result["probability"])
     except Exception as e:
         print(f"Inference error: {e}") # 로그 확인용
         raise HTTPException(
@@ -80,12 +81,14 @@ async def segment(file: UploadFile = File(...)):
         )
         
     result_id = str(uuid4())
-    result_path = RESULT_DIR / f"{result_id}.png"
+    overlay_path = RESULT_DIR / f"{result_id}_overlay.png"
+    heatmap_path = RESULT_DIR / f"{result_id}_heatmap.png"
     
     # 결과 저장 (이 부분도 I/O이므로 thread pool 사용 권장)
-    success = await run_in_threadpool(cv2.imwrite, str(result_path), overlay)
+    success_overlay = await run_in_threadpool(cv2.imwrite, str(overlay_path), overlay)
+    success_heatmap = await run_in_threadpool(cv2.imwrite, str(heatmap_path), heatmap)
     
-    if not success:
+    if not success_overlay or not success_heatmap:
         raise HTTPException(
             status_code=500,
             detail={"code": "RESULT_SAVE_FAILED", "message": "결과 이미지를 저장하는 중 오류가 발생했습니다."},
@@ -97,21 +100,40 @@ async def segment(file: UploadFile = File(...)):
         filename=file.filename,
         width=image.shape[1],
         height=image.shape[0],
-        image_url=f"/api/results/{result_id}/image",
+        image_url=f"/api/results/{result_id}/overlay",
+        heatmap_url=f"/api/results/{result_id}/heatmap",
         message="이미지 세그멘테이션이 완료되었습니다.",
     )
    
     
-@router.get("/api/results/{result_id}/image")
-async def get_image(result_id: str):
-    result_path = RESULT_DIR / f"{result_id}.png"
+@router.get("/api/results/{result_id}/overlay")
+async def get_overlay(result_id: str):
+    result_path = RESULT_DIR / f"{result_id}_overlay.png"
 
     if not result_path.exists():
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "RESULT_NOT_FOUND",
-                "message": "요청한 마스크 결과를 찾을 수 없습니다.",
+                "message": "요청한 오버레이 결과를 찾을 수 없습니다.",
+            },
+        )
+
+    return FileResponse(
+        path=result_path,
+        media_type="image/png",
+    )
+
+@router.get("/api/results/{result_id}/heatmap")
+async def get_heatmap(result_id: str):
+    result_path = RESULT_DIR / f"{result_id}_heatmap.png"
+
+    if not result_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "RESULT_NOT_FOUND",
+                "message": "요청한 히트맵 결과를 찾을 수 없습니다.",
             },
         )
 

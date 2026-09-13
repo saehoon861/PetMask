@@ -7,6 +7,7 @@ class SegmentationResponse(BaseModel):
     width: int
     height: int
     image_url: str
+    heatmap_url: str
     message: str
     
     

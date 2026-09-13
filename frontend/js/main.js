@@ -2,6 +2,7 @@ const dropZone = document.getElementById("drop-zone");
 const imageInput = document.getElementById("image-input");
 const originalImage = document.getElementById("original-image");
 const resultImage = document.getElementById("result-image");
+const heatmapImage = document.getElementById("heatmap-image");
 const loadingOverlay = document.getElementById("loading-overlay");
 
 let selectedFile = null;
@@ -162,6 +163,7 @@ segmentButton.addEventListener("click", async () => {
 
 
         resultImage.src = result.image_url;
+        heatmapImage.src = result.heatmap_url;
 
 
     } catch (error) {

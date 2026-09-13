@@ -189,6 +189,18 @@ class PetMaskModelService:
 
         return result
 
+    def create_heatmap(
+        self,
+        probability: np.ndarray
+    ) -> np.ndarray:
+        # 0.0~1.0 -> 0~255
+        heatmap_gray = (probability * 255).astype(np.uint8)
+        
+        # 컬러맵 적용
+        heatmap_color = cv2.applyColorMap(heatmap_gray, cv2.COLORMAP_JET)
+        
+        return heatmap_color
+
     @torch.inference_mode()
     def predict(
         self,
