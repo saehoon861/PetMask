@@ -1,17 +1,32 @@
+:root {
+    --brand-color: #ff8a3d;
+    --brand-dark: #e6772e;
+    --bg-color: #f9f9f9;
+    --text-color: #333;
+    --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
 body {
     margin: 0;
-    font-family: Arial, sans-serif;
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
 }
 
 header {
+    background: white;
     padding: 20px 40px;
     border-bottom: 1px solid #ddd;
+    box-shadow: var(--shadow);
 }
 
 main {
     max-width: 1000px;
-    margin: 0 auto;
-    padding: 40px 20px;
+    margin: 40px auto;
+    padding: 40px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: var(--shadow);
 }
 
 .upload-section {
@@ -22,9 +37,13 @@ main {
     margin: 30px auto;
     padding: 60px 20px;
     max-width: 500px;
+    border: 2px dashed var(--brand-color);
+    border-radius: 16px;
+    transition: all 0.3s ease;
+}
 
-    border: 2px dashed #aaa;
-    border-radius: 12px;
+.drop-zone.drag-over {
+    background-color: rgba(255, 138, 61, 0.1);
 }
 
 .drop-zone input {
@@ -32,9 +51,19 @@ main {
 }
 
 #segment-button {
-    padding: 12px 30px;
+    padding: 14px 40px;
     font-size: 16px;
+    font-weight: 600;
     cursor: pointer;
+    background-color: var(--brand-color);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    transition: background 0.3s ease;
+}
+
+#segment-button:hover {
+    background-color: var(--brand-dark);
 }
 
 .result-section {
@@ -50,13 +79,13 @@ main {
 .image-box {
     width: 100%;
     min-height: 300px;
-
-    border: 1px solid #ddd;
+    border: 1px solid #eee;
     border-radius: 12px;
-
     display: flex;
     align-items: center;
     justify-content: center;
+    background: #fdfdfd;
+    overflow: hidden;
 }
 
 .image-box img {
@@ -71,62 +100,33 @@ main {
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.8); /* 배경을 조금 더 어둡게 */
-    display: none; /* 기본은 숨김 */
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    z-index: 9999; /* 다른 어떤 요소보다 위에 표시 */
+    z-index: 9999;
 }
 
-/* Overlay 표시 상태 */
 .loading-overlay.active {
     display: flex !important;
 }
 
-
-/* 중앙 내용 */
 .loading-content {
     text-align: center;
     color: white;
 }
 
-
-.loading-content h2 {
-    margin-top: 20px;
-    margin-bottom: 10px;
-}
-
-
-.loading-content p {
-    color: #ccc;
-}
-
-
-/* 회전 아이콘 */
 .spinner {
-    width: 45px;
-    height: 45px;
-
-    margin: 0 auto;
-
-    border: 4px solid #555;
-    border-top: 4px solid #ff8a3d;
-
+    width: 50px;
+    height: 50px;
+    margin: 0 auto 20px;
+    border: 5px solid rgba(255, 255, 255, 0.2);
+    border-top: 5px solid var(--brand-color);
     border-radius: 50%;
-
     animation: spin 1s linear infinite;
 }
 
-
 @keyframes spin {
-
-    from {
-        transform: rotate(0deg);
-    }
-
-    to {
-        transform: rotate(360deg);
-    }
-
+    to { transform: rotate(360deg); }
 }
