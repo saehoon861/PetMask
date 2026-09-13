@@ -61,6 +61,7 @@ async def segment(file: UploadFile = File(...)):
 
     image_array = np.frombuffer(contents, dtype=np.uint8)
     image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     if image is None:
         raise HTTPException(
