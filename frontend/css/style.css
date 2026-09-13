@@ -191,11 +191,37 @@ footer {
 }
 
 /* Responsive adjustments */
-@media (max-width: 600px) {
+@media (max-width: 768px) {
     main {
+        width: 95%;
         padding: 20px;
+    }
+    header {
+        padding: 15px 20px;
+    }
+    .samples-container {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .sample-image {
+        width: 80px;
+        height: 80px;
     }
     .result-section {
         grid-template-columns: 1fr;
+    }
+    .image-box {
+        min-height: 200px;
+    }
+    .image-box img {
+        max-height: 250px;
+    }
+}
+@media (max-width: 480px) {
+    .drop-zone {
+        padding: 40px 10px;
+    }
+    #segment-button {
+        width: 100%;
     }
 }
