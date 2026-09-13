@@ -2,6 +2,7 @@ const dropZone = document.getElementById("drop-zone");
 const imageInput = document.getElementById("image-input");
 const originalImage = document.getElementById("original-image");
 const resultImage = document.getElementById("result-image");
+const loadingOverlay = document.getElementById("loading-overlay");
 
 let selectedFile = null;
 let previewUrl = null;
@@ -81,37 +82,86 @@ function handleFile(file) {
 const segmentButton = document.getElementById("segment-button");
 
 segmentButton.addEventListener("click", async () => {
+
     if (!selectedFile) {
         alert("이미지를 선택해주세요.");
         return;
     }
 
+
     const formData = new FormData();
-    formData.append("file", selectedFile);
+
+    formData.append(
+        "file",
+        selectedFile
+    );
+
+
+    // 추론 시작 → Loading 화면 표시
+    loadingOverlay.classList.add("active");
+
 
     try {
-        const response = await fetch("/api/segment", {
-            method: "POST",
-            body: formData,
-        });
 
-        console.log("status:", response.status);
+        const response = await fetch(
+            "/api/segment",
+            {
+                method: "POST",
+                body: formData,
+            }
+        );
+
+
+        console.log(
+            "status:",
+            response.status
+        );
+
 
         if (!response.ok) {
-            const errorText = await response.text();
-            console.log("server error:", errorText);
 
-            throw new Error("이미지 처리에 실패했습니다.");
+            const errorText = await response.text();
+
+            console.log(
+                "server error:",
+                errorText
+            );
+
+            throw new Error(
+                "이미지 처리에 실패했습니다."
+            );
         }
+
 
         const result = await response.json();
 
-        console.log("result:", result);
+
+        console.log(
+            "result:",
+            result
+        );
+
 
         resultImage.src = result.image_url;
 
+
     } catch (error) {
-        console.error("request error:", error);
-        alert("서버 요청 중 오류가 발생했습니다.");
+
+        console.error(
+            "request error:",
+            error
+        );
+
+        alert(
+            "서버 요청 중 오류가 발생했습니다."
+        );
+
+
+    } finally {
+
+        // 성공/실패 관계없이 Loading 종료
+        loadingOverlay.classList.remove("active");
+
     }
+
 });
