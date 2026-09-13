@@ -96,6 +96,33 @@ footer {
     background-color: var(--brand-dark);
 }
 
+.samples-section {
+    margin-top: 50px;
+    text-align: center;
+}
+
+.samples-container {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.sample-image {
+    width: 120px;
+    height: 120px;
+    object-fit: cover;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform 0.2s;
+    border: 2px solid transparent;
+}
+
+.sample-image:hover {
+    transform: scale(1.05);
+    border-color: var(--brand-color);
+}
+
 .result-section {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));

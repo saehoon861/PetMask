@@ -78,6 +78,25 @@ function handleFile(file) {
     originalImage.src = previewUrl;
 }
 
+// 샘플 이미지 선택 처리
+const sampleImages = document.querySelectorAll(".sample-image");
+
+sampleImages.forEach((img) => {
+    img.addEventListener("click", async () => {
+        const imageUrl = img.src;
+
+        // Fetch image as blob
+        const response = await fetch(imageUrl);
+        const blob = await response.blob();
+        
+        // Convert blob to File
+        const filename = imageUrl.substring(imageUrl.lastIndexOf('/') + 1);
+        const file = new File([blob], filename, { type: blob.type });
+
+        handleFile(file);
+    });
+});
+
 
 const segmentButton = document.getElementById("segment-button");
 
