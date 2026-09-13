@@ -11,6 +11,9 @@ body {
     font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
     background-color: var(--bg-color);
     color: var(--text-color);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
 }
 
 header {
@@ -18,15 +21,34 @@ header {
     padding: 20px 40px;
     border-bottom: 1px solid #ddd;
     box-shadow: var(--shadow);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+header h1 {
+    margin: 0;
+    color: var(--brand-color);
 }
 
 main {
     max-width: 1000px;
+    width: 90%;
     margin: 40px auto;
     padding: 40px;
     background: white;
     border-radius: 16px;
     box-shadow: var(--shadow);
+    flex: 1;
+}
+
+footer {
+    text-align: center;
+    padding: 20px;
+    background: white;
+    border-top: 1px solid #ddd;
+    color: #888;
+    font-size: 14px;
 }
 
 .upload-section {
@@ -37,13 +59,21 @@ main {
     margin: 30px auto;
     padding: 60px 20px;
     max-width: 500px;
-    border: 2px dashed var(--brand-color);
+    border: 3px dashed #ddd;
     border-radius: 16px;
-    transition: all 0.3s ease;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    cursor: pointer;
+}
+
+.drop-zone:hover {
+    border-color: var(--brand-color);
+    background-color: rgba(255, 138, 61, 0.05);
 }
 
 .drop-zone.drag-over {
+    border-color: var(--brand-color);
     background-color: rgba(255, 138, 61, 0.1);
+    transform: scale(1.02);
 }
 
 .drop-zone input {
@@ -67,7 +97,8 @@ main {
 }
 
 .result-section {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 30px;
     margin-top: 50px;
 }
@@ -79,8 +110,8 @@ main {
 .image-box {
     width: 100%;
     min-height: 300px;
-    border: 1px solid #eee;
-    border-radius: 12px;
+    border: 2px dashed #eee;
+    border-radius: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -91,6 +122,7 @@ main {
 .image-box img {
     max-width: 100%;
     max-height: 400px;
+    object-fit: contain;
 }
 
 /* 추론 중 Overlay */
@@ -129,4 +161,14 @@ main {
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+    main {
+        padding: 20px;
+    }
+    .result-section {
+        grid-template-columns: 1fr;
+    }
 }
