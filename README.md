@@ -12,7 +12,6 @@ U-Net 기반 반려동물 세그멘테이션 및 배포 프로젝트입니다.
 - U-Net 기반 Semantic Segmentation
 - PyTorch 기반 모델 학습 및 추론
 - FastAPI 기반 Inference Server 구축
-- React(Vite) 기반 Demo Frontend 구현
 - Docker 기반 컨테이너화 및 배포
 
 ---
@@ -30,8 +29,9 @@ U-Net 기반 반려동물 세그멘테이션 및 배포 프로젝트입니다.
 - FastAPI
 
 ### Frontend
-- React
-- Vite
+- CSS
+- HTML
+- Java Script
 
 ### Deployment
 - Docker
@@ -58,10 +58,12 @@ U-Net 기반 반려동물 세그멘테이션 및 배포 프로젝트입니다.
 
 ```text
 petmask/
-├── src/                 # 모델 학습 코드
-├── app/                 # FastAPI 서버
-├── frontend/            # React 프론트엔드
-├── weights/             # 학습된 모델 가중치
-├── outputs/             # 예측 결과 저장
-├── Dockerfile
-└── README.md
+├── src/                 # 모델 구조, 학습 및 평가 코드
+├── backend/             # FastAPI 기반 백엔드 및 모델 추론 API
+├── frontend/            # HTML/CSS/JavaScript 기반 웹 UI
+├── checkpoints/         # 학습된 모델 체크포인트
+├── temp/                # 추론 결과 이미지 임시 저장
+├── Dockerfile           # Docker 이미지 빌드 설정
+├── pyproject.toml       # Python 프로젝트 및 의존성 설정
+├── uv.lock              # uv 의존성 버전 고정
+└── README.md            # 프로젝트 설명 및 실행 방법
