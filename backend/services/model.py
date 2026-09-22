@@ -252,4 +252,16 @@ class PetMaskModelService:
         }
 
 
-model_service = PetMaskModelService()
+model_service = None
+
+def get_model_service():
+    global model_service
+
+    if model_service is None:
+        print("🔥 MODEL LOADING")
+        model_service = PetMaskModelService()
+        print("✅ MODEL LOADED")
+    else:
+        print("♻️ MODEL REUSED")
+
+    return model_service

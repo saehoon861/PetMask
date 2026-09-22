@@ -1,5 +1,6 @@
 from backend.services.model import IMG_SIZE, model_service
 from backend.schemas.predict_schema import SegmentationResponse
+from backend.services.model import get_model_service
 from pathlib import Path
 from uuid import uuid4
 import cv2
@@ -71,6 +72,7 @@ async def segment(file: UploadFile = File(...)):
 
     # 8. 비동기 모델 추론 (thread pool 사용)
     try:
+        model_service = await run_in_threadpool(get_model_service)
         result = await run_in_threadpool(model_service.predict, image)
         overlay = result["overlay"]
         heatmap = await run_in_threadpool(model_service.create_heatmap, result["probability"])
